@@ -1104,7 +1104,7 @@ CONTAINS
       CHARACTER(LEN=default_path_length)                 :: filename
       INTEGER                                            :: handle, maxmom, reference, unit_nr
       LOGICAL                                            :: do_kpoints, magnetic, periodic, vel_gauge,&
-                                                            rrpnl
+                                                            rrpnl, lin_mom
       REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
       TYPE(section_vals_type), POINTER                   :: print_key
 
@@ -1127,6 +1127,8 @@ CONTAINS
                                      keyword_name="DFT%PRINT%MOMENTS%COM_RRPNL")
          vel_gauge = section_get_lval(section_vals=input, &
                                      keyword_name="DFT%PRINT%MOMENTS%VEL_GAUGE")
+         lin_mom = section_get_lval(section_vals=input, &
+                                     keyword_name="DFT%PRINT%MOMENTS%LIN_MOM")
 
          NULLIFY (ref_point)
          CALL section_vals_val_get(input, "DFT%PRINT%MOMENTS%REF_POINT", r_vals=ref_point)
@@ -1158,7 +1160,7 @@ CONTAINS
             END IF
          END IF
 
-         IF (vel_gauge) THEN
+         IF (lin_mom) THEN
             IF (periodic) THEN
               CPWARN("Velocity representation not implemented for periodic calculations!")
             ELSE

@@ -85,6 +85,7 @@ MODULE qs_moments
                                               neighbor_list_iterator_p_type,&
                                               neighbor_list_iterator_release,&
                                               neighbor_list_set_p_type
+   USE qs_operators_ao,                 ONLY: build_lin_mom_matrix
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_type
    USE rt_propagation_types,            ONLY: get_rtp,&
@@ -1637,6 +1638,12 @@ CONTAINS
 
    END SUBROUTINE qs_moment_locop
 
+
+! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param unit_number ...
+! **************************************************************************************************
    SUBROUTINE qs_moment_vel(qs_env, unit_number)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       INTEGER, INTENT(IN)                                :: unit_number
@@ -1646,31 +1653,93 @@ CONTAINS
 
       CHARACTER(LEN=8), ALLOCATABLE, DIMENSION(:)        :: rlab
 
-      INTEGER                                            :: handle, index, ix, iy, iz, nm
-      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: momenta   
+      INTEGER                                            :: handle, ind, ispin, ix, iy, iz, nm
+      TYPE(dbcsr_type), POINTER                          :: mat_tmp_ao
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, momenta_ao, rho_ao, rho_ao_im
+      REAL(dp)                                           :: strace, trace
+      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: momenta
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(qs_rho_type), POINTER                         :: rho
+
 
       CPASSERT(ASSOCIATED(qs_env))
       CALL timeset(routineN, handle)
 
       nm = 3
 
-
       ALLOCATE(momenta(nm))
       ALLOCATE(rlab(nm+1))
       momenta = 0.0_dp
       rlab=""
 
-      DO index = 1, nm
-        ix = indco(1, index+1)
-        iy = indco(2, index+1)
-        iz = indco(3, index+1)
-        CALL set_label(rlab(index+1), ix, iy, iz)
+      ! get labels
+      DO ind = 1, nm
+        ix = indco(1, ind+1)
+        iy = indco(2, ind+1)
+        iz = indco(3, ind+1)
+        CALL set_label(rlab(ind+1), ix, iy, iz)
       ENDDO
 
-      ! replace by momentum expectation value calculation
-      DO index = 1, nm
-        momenta(index) = 1.0_dp
-      ENDDO
+      ! Allocate dbcsr momentum matrix in ao basis
+      NULLIFY (momenta_ao, matrix_s)
+      CALL get_qs_env(qs_env=qs_env, matrix_s=matrix_s)
+      CALL dbcsr_allocate_matrix_set(momenta_ao, nm)
+      DO ind = 1, nm
+         ALLOCATE (momenta_ao(ind)%matrix)
+         CALL dbcsr_desymmetrize(matrix_s(1)%matrix, momenta_ao(ind)%matrix) !, "Momenta_ao")
+         CALL dbcsr_set(momenta_ao(ind)%matrix, 0.0_dp)
+      END DO
+
+      ! Calculate linear momentum matrix in ao basis
+      CALL build_lin_mom_matrix(qs_env, momenta_ao)
+
+      NULLIFY(rho, dft_control)
+      CALL get_qs_env(qs_env = qs_env, &
+                      dft_control = dft_control, &
+                      rho = rho)
+
+      ! Real part of the density
+      NULLIFY(rho_ao)
+      CALL qs_rho_get(rho, rho_ao = rho_ao)
+
+      NULLIFY (mat_tmp_ao)
+      ALLOCATE (mat_tmp_ao)
+      CALL dbcsr_desymmetrize(matrix_s(1)%matrix, mat_tmp_ao)
+
+      ! Calculate expectation value over real part
+      DO ind = 1, SIZE(momenta_ao)
+         strace = 0._dp
+         DO ispin = 1, dft_control%nspins            
+            CALL dbcsr_set(mat_tmp_ao, 0.0_dp)
+            CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao(ispin)%matrix, momenta_ao(ind)%matrix, &
+                                   0.0_dp, mat_tmp_ao)
+            CALL dbcsr_trace(mat_tmp_ao, trace)
+            strace = strace+trace
+         END DO
+         momenta(ind) = strace
+      END DO
+
+      ! imaginary part of the density for RTP
+      IF (qs_env%run_rtp) THEN
+        NULLIFY(rho_ao_im)
+        CALL qs_rho_get(rho, rho_ao_im=rho_ao_im)
+
+        ! Calculate expectation value over imaginary part
+        DO ind = 1, SIZE(momenta_ao)
+           strace = 0._dp
+           DO ispin = 1, dft_control%nspins              
+              CALL dbcsr_set(mat_tmp_ao, 0.0_dp)
+              CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao_im(ispin)%matrix, momenta_ao(ind)%matrix, &
+                                     0.0_dp, mat_tmp_ao)
+              CALL dbcsr_trace(mat_tmp_ao, trace)
+              strace = strace+trace
+           END DO
+           momenta(ind) = momenta(ind) + strace
+        END DO        
+      ENDIF
+
+      CALL dbcsr_deallocate_matrix_set(momenta_ao)
+      CALL dbcsr_deallocate_matrix(mat_tmp_ao)
 
       CALL print_moments_vel(unit_number, momenta, rlab)
 
@@ -1981,7 +2050,6 @@ END SUBROUTINE qs_com_rrpnl
       ENDIF
 
   END SUBROUTINE print_first_moments
-
 
 ! **************************************************************************************************
 !> \brief ...
