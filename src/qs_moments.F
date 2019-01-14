@@ -100,7 +100,8 @@ MODULE qs_moments
    ! Public subroutines
    PUBLIC :: build_berry_moment_matrix, build_local_moment_matrix
    PUBLIC :: build_berry_kpoint_matrix
-   PUBLIC :: qs_moment_berry_phase, qs_moment_locop, qs_com_rrpnl
+   PUBLIC :: qs_moment_berry_phase, qs_moment_locop, qs_moment_vel
+   PUBLIC :: qs_com_rrpnl
 
 CONTAINS
 
@@ -1636,6 +1637,50 @@ CONTAINS
 
    END SUBROUTINE qs_moment_locop
 
+   SUBROUTINE qs_moment_vel(qs_env, unit_number)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      INTEGER, INTENT(IN)                                :: unit_number
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'qs_moments_vel', &
+         routineP = moduleN//':'//routineN
+
+      CHARACTER(LEN=8), ALLOCATABLE, DIMENSION(:)        :: rlab
+
+      INTEGER                                            :: handle, index, ix, iy, iz, nm
+      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: momenta   
+
+      CPASSERT(ASSOCIATED(qs_env))
+      CALL timeset(routineN, handle)
+
+      nm = 3
+
+
+      ALLOCATE(momenta(nm))
+      ALLOCATE(rlab(nm+1))
+      momenta = 0.0_dp
+      rlab=""
+
+      DO index = 1, nm
+        ix = indco(1, index+1)
+        iy = indco(2, index+1)
+        iz = indco(3, index+1)
+        CALL set_label(rlab(index+1), ix, iy, iz)
+      ENDDO
+
+      ! replace by momentum expectation value calculation
+      DO index = 1, nm
+        momenta(index) = 1.0_dp
+      ENDDO
+
+      CALL print_moments_vel(unit_number, momenta, rlab)
+
+      DEALLOCATE(momenta)
+      DEALLOCATE(rlab)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE qs_moment_vel
+
 ! **************************************************************************************************
 !> \brief ...
 !> \param qs_env ...
@@ -1912,7 +1957,6 @@ END SUBROUTINE qs_com_rrpnl
 
    END SUBROUTINE print_moments
 
-
 ! **************************************************************************************************
 !> \brief ...
 !> \param unit_number ...
@@ -1920,7 +1964,7 @@ END SUBROUTINE qs_com_rrpnl
 !> \param rlab ...
 !> \param description ...
 ! **************************************************************************************************
-   SUBROUTINE print_first_moments(unit_number, momenta, rlab, description)
+  SUBROUTINE print_first_moments(unit_number, momenta, rlab, description)
       INTEGER, INTENT(IN)                                :: unit_number
       REAL(dp), DIMENSION(:), INTENT(IN)                 :: momenta
       CHARACTER(LEN=8), DIMENSION(:)                     :: rlab
@@ -1936,7 +1980,7 @@ END SUBROUTINE qs_com_rrpnl
             (TRIM(rlab(i+1)), "=", momenta(i), i=1, 3), "Total=", dd
       ENDIF
 
-END SUBROUTINE print_first_moments
+  END SUBROUTINE print_first_moments
 
 
 ! **************************************************************************************************
@@ -1967,7 +2011,7 @@ END SUBROUTINE print_first_moments
 
       ENDIF
 
-END SUBROUTINE print_second_moments
+  END SUBROUTINE print_second_moments
 
 ! **************************************************************************************************
 !> \brief ...
@@ -2040,7 +2084,7 @@ END SUBROUTINE print_second_moments
 
       CALL timestop(handle)
 
-END SUBROUTINE initialize_dbcsr_operator_matrix
+  END SUBROUTINE initialize_dbcsr_operator_matrix
 
 END MODULE qs_moments
 

@@ -168,6 +168,7 @@ MODULE qs_scf_post_gpw
                                               mo_set_p_type
    USE qs_moments,                      ONLY: qs_moment_berry_phase,&
                                               qs_moment_locop,&
+                                              qs_moment_vel,&
                                               qs_com_rrpnl
    USE qs_neighbor_list_types,          ONLY: get_iterator_info,&
                                               get_neighbor_list_set_p,&
@@ -1102,7 +1103,8 @@ CONTAINS
 
       CHARACTER(LEN=default_path_length)                 :: filename
       INTEGER                                            :: handle, maxmom, reference, unit_nr
-      LOGICAL                                            :: do_kpoints, magnetic, periodic, rrpnl
+      LOGICAL                                            :: do_kpoints, magnetic, periodic, vel_gauge,&
+                                                            rrpnl
       REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
       TYPE(section_vals_type), POINTER                   :: print_key
 
@@ -1123,6 +1125,9 @@ CONTAINS
                                      keyword_name="DFT%PRINT%MOMENTS%MAGNETIC")
          rrpnl = section_get_lval(section_vals=input, &
                                      keyword_name="DFT%PRINT%MOMENTS%COM_RRPNL")
+         vel_gauge = section_get_lval(section_vals=input, &
+                                     keyword_name="DFT%PRINT%MOMENTS%VEL_GAUGE")
+
          NULLIFY (ref_point)
          CALL section_vals_val_get(input, "DFT%PRINT%MOMENTS%REF_POINT", r_vals=ref_point)
          unit_nr = cp_print_key_unit_nr(logger=logger, basis_section=input, &
@@ -1150,6 +1155,14 @@ CONTAINS
             ELSE
                CALL qs_moment_locop(qs_env, magnetic, maxmom, reference, ref_point, unit_nr)
                IF (rrpnl) CALL qs_com_rrpnl(qs_env, unit_nr)
+            END IF
+         END IF
+
+         IF (vel_gauge) THEN
+            IF (periodic) THEN
+              CPWARN("Velocity representation not implemented for periodic calculations!")
+            ELSE
+              CALL qs_moment_vel(qs_env, unit_nr)
             END IF
          END IF
 
