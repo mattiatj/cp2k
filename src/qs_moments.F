@@ -1307,8 +1307,8 @@ CONTAINS
       CALL put_results(results=results, description=description, &
                        values=rmom(2:4, 3))
       IF (magnetic) THEN
-         CONTINUE
-         ! CALL print_moments(unit_number, nmom, rmom, rlab, rcc, cell, periodic=.TRUE., mmom=mmom)
+         ! CONTINUE
+         CALL print_moments(unit_number, nmom, rmom, rlab, rcc, cell, periodic=.TRUE.) !, mmom=mmom)
       ELSE
          CALL print_moments(unit_number, nmom, rmom, rlab, rcc, cell, periodic=.TRUE.)
       END IF
@@ -1752,7 +1752,7 @@ CONTAINS
       CALL dbcsr_deallocate_matrix_set(magmom_ao)
       CALL dbcsr_deallocate_matrix(mat_tmp_ao)
 
-      CALL print_moments_vel(unit_number, magmom, rlab)
+      CALL print_moments_magnetic(unit_number, magmom, rlab)
 
       DEALLOCATE(magmom)
       DEALLOCATE(rlab)
@@ -2276,6 +2276,30 @@ END SUBROUTINE qs_com_rrpnl
       CALL timestop(handle)
 
   END SUBROUTINE initialize_dbcsr_operator_matrix
+
+
+! **************************************************************************************************
+!> \brief ...
+!> \param unit_number ...
+!> \param momenta
+!> \param rlab ...
+! **************************************************************************************************
+   SUBROUTINE print_moments_magnetic(unit_number, momenta, rlab)
+    INTEGER, INTENT(IN)                                  :: unit_number
+    REAL(dp), DIMENSION(:), INTENT(IN)                   :: momenta
+    CHARACTER(LEN=8), DIMENSION(:)                       :: rlab
+
+    INTEGER                                              :: i 
+    REAL(dp)                                             :: dd
+
+    IF (unit_number > 0) THEN
+      dd = SQRT(SUM(momenta(1:3)**2))
+      WRITE (unit_number, "(T3,A)") "Magnetic Dipole Moment (only orbital contrib.) [a.u.]"
+      WRITE (unit_number, "(T5,3(A,A,F14.8,1X),T60,A,T68,F14.8)") &
+         (TRIM(rlab(i+1)), "=", momenta(i), i=1, 3), "Total=", dd
+    ENDIF
+
+   END SUBROUTINE print_moments_magnetic
 
 END MODULE qs_moments
 
