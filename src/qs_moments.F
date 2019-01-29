@@ -85,7 +85,7 @@ MODULE qs_moments
                                               neighbor_list_iterator_p_type,&
                                               neighbor_list_iterator_release,&
                                               neighbor_list_set_p_type
-   USE qs_operators_ao,                 ONLY: build_lin_mom_matrix
+   USE qs_operators_ao,                 ONLY: build_lin_mom_matrix_antisym
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_type
    USE rt_propagation_types,            ONLY: get_rtp,&
@@ -102,7 +102,8 @@ MODULE qs_moments
    PUBLIC :: build_berry_moment_matrix, build_local_moment_matrix
    PUBLIC :: build_berry_kpoint_matrix
    PUBLIC :: qs_moment_berry_phase, qs_moment_locop, qs_moment_vel
-   PUBLIC :: qs_com_rrpnl
+   PUBLIC :: qs_com_rrpnl, qs_moment_magnetic
+
 
 CONTAINS
 
@@ -1306,7 +1307,8 @@ CONTAINS
       CALL put_results(results=results, description=description, &
                        values=rmom(2:4, 3))
       IF (magnetic) THEN
-         CALL print_moments(unit_number, nmom, rmom, rlab, rcc, cell, periodic=.TRUE., mmom=mmom)
+         CONTINUE
+         ! CALL print_moments(unit_number, nmom, rmom, rlab, rcc, cell, periodic=.TRUE., mmom=mmom)
       ELSE
          CALL print_moments(unit_number, nmom, rmom, rlab, rcc, cell, periodic=.TRUE.)
       END IF
@@ -1478,15 +1480,15 @@ CONTAINS
       INTEGER                                            :: akind, handle, i, ia, iatom, ikind, &
                                                             ispin, ix, iy, iz, l, nm, nmom
       REAL(dp)                                           :: charge, dd, strace, trace
-      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: mmom
+      ! REAL(dp), ALLOCATABLE, DIMENSION(:)                :: mmom
       REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: rmom
       REAL(dp), DIMENSION(3)                             :: rcc, ria
       TYPE(atomic_kind_type), POINTER                    :: atomic_kind
       TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_para_env_type), POINTER                    :: para_env
       TYPE(cp_result_type), POINTER                      :: results
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: magmom, matrix_s, moments, rho_ao
-      TYPE(dbcsr_type), POINTER                          :: rho_magmom_ao
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, moments, rho_ao !, magmom
+      ! TYPE(dbcsr_type), POINTER                          :: rho_magmom_ao
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(distribution_1d_type), POINTER                :: local_particles
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
@@ -1582,61 +1584,182 @@ CONTAINS
       rmom(:, 3) = rmom(:, 1)+rmom(:, 2)
 
       ! magnetic moments
-      IF (magnetic) THEN
-         NULLIFY (magmom)
-         CALL build_local_magmom_matrix(qs_env, magmom, nmom, ref_point=rcc)
-         nm = SIZE(magmom)
-         ALLOCATE (mmom(nm))
+      ! IF (magnetic) THEN
+      !    NULLIFY (magmom)
+      !    CALL build_local_magmom_matrix(qs_env, magmom, nmom, ref_point=rcc)
+      !    nm = SIZE(magmom)
+      !    ALLOCATE (mmom(nm))
 
-         ! Allocate matrices to store the matrix product to be traced (dbcsr_dot only works for products of
-         ! symmetric matrices)
-         NULLIFY (rho_magmom_ao)
-         ALLOCATE (rho_magmom_ao)
-         CALL dbcsr_desymmetrize(matrix_s(1)%matrix, rho_magmom_ao)
+      !    ! Allocate matrices to store the matrix product to be traced (dbcsr_trace only works for products of
+      !    ! symmetric matrices)
+      !    NULLIFY (rho_magmom_ao)
+      !    ALLOCATE (rho_magmom_ao)
+      !    CALL dbcsr_desymmetrize(matrix_s(1)%matrix, rho_magmom_ao)
 
-         IF (qs_env%run_rtp) THEN
-            ! get imaginary part of the density in rho_ao (the real part is not needed since the trace of the product
-            ! of a symmetric (REAL(rho_ao)) and an anti-symmetric (L_AO) matrix is zero)
-            ! There may be other cases, where the imaginary part of the density is relevant
-            NULLIFY (rho_ao)
-            CALL qs_rho_get(rho, rho_ao_im=rho_ao)
-         ENDIF
-         ! if the density is purely real this is an expensive way to calculate zero
-         DO i = 1, SIZE(magmom)
-            strace = 0._dp
-            DO ispin = 1, dft_control%nspins
-               CALL dbcsr_set(rho_magmom_ao, 0.0_dp)
-               CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao(ispin)%matrix, magmom(i)%matrix, &
-                                   0.0_dp, rho_magmom_ao)
-               CALL dbcsr_trace(rho_magmom_ao, trace)
-               strace = strace+trace
-            END DO
-            mmom(i) = strace
-         END DO
+      !    IF (qs_env%run_rtp) THEN
+      !       ! get imaginary part of the density in rho_ao (the real part is not needed since the trace of the product
+      !       ! of a symmetric (REAL(rho_ao)) and an anti-symmetric (L_AO) matrix is zero)
+      !       ! There may be other cases, where the imaginary part of the density is relevant
+      !       NULLIFY (rho_ao)
+      !       CALL qs_rho_get(rho, rho_ao_im=rho_ao)
+      !    ENDIF
+      !    ! if the density is purely real this is an expensive way to calculate zero
+      !    DO i = 1, SIZE(magmom)
+      !       strace = 0._dp
+      !       DO ispin = 1, dft_control%nspins
+      !          CALL dbcsr_set(rho_magmom_ao, 0.0_dp)
+      !          CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao(ispin)%matrix, magmom(i)%matrix, &
+      !                              0.0_dp, rho_magmom_ao)
+      !          CALL dbcsr_trace(rho_magmom_ao, trace)
+      !          strace = strace+trace
+      !       END DO
+      !       mmom(i) = strace
+      !    END DO
 
-         CALL dbcsr_deallocate_matrix_set(magmom)
-         CALL dbcsr_deallocate_matrix(rho_magmom_ao)
-      END IF
+      !    CALL dbcsr_deallocate_matrix_set(magmom)
+      !    CALL dbcsr_deallocate_matrix(rho_magmom_ao)
+      ! END IF
 
       description = "[DIPOLE]"
       CALL cp_results_erase(results=results, description=description)
       CALL put_results(results=results, description=description, &
                        values=rmom(2:4, 3))
+      ! IF (magnetic) THEN
+      !    CALL print_moments(unit_number, nmom, rmom, rlab, rcc, cell, periodic=.FALSE., mmom=mmom)
+      ! ELSE
+      CALL print_moments(unit_number, nmom, rmom, rlab, rcc, cell, periodic=.FALSE.)
+      ! END IF
       IF (magnetic) THEN
-         CALL print_moments(unit_number, nmom, rmom, rlab, rcc, cell, periodic=.FALSE., mmom=mmom)
-      ELSE
-         CALL print_moments(unit_number, nmom, rmom, rlab, rcc, cell, periodic=.FALSE.)
-      END IF
+        CONTINUE
+      ENDIF
 
       DEALLOCATE (rmom)
       DEALLOCATE (rlab)
-      IF (magnetic) THEN
-         DEALLOCATE (mmom)
-      END IF
+      ! IF (magnetic) THEN
+      !    DEALLOCATE (mmom)
+      ! END IF
 
       CALL timestop(handle)
 
    END SUBROUTINE qs_moment_locop
+
+
+! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param unit_number ...
+!> \param ref_point ...
+! **************************************************************************************************
+   SUBROUTINE qs_moment_magnetic(qs_env, reference, ref_point, unit_number)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      INTEGER, INTENT(IN)                                :: unit_number, reference
+      REAL(dp), DIMENSION(:), POINTER                    :: ref_point
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'qs_moment_magnetic', &
+         routineP = moduleN//':'//routineN
+
+      CHARACTER(LEN=8), ALLOCATABLE, DIMENSION(:)        :: rlab
+
+      INTEGER                                            :: handle, ind, ispin, ix, iy, iz, nm
+      TYPE(dbcsr_type), POINTER                          :: mat_tmp_ao
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, magmom_ao, rho_ao, rho_ao_im
+      REAL(dp)                                           :: strace, trace
+      REAL(dp), DIMENSION(3)                             :: rcc
+      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: magmom
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(qs_rho_type), POINTER                         :: rho
+
+
+      CPASSERT(ASSOCIATED(qs_env))
+      CALL timeset(routineN, handle)
+
+      ! reference point
+      CALL get_reference_point(rcc, qs_env=qs_env, reference=reference, ref_point=ref_point)
+
+      nm = 3
+
+      ALLOCATE(magmom(nm))
+      ALLOCATE(rlab(nm+1))
+      magmom = 0.0_dp
+      rlab=""
+
+      ! get labels
+      DO ind = 1, nm
+        ix = indco(1, ind+1)
+        iy = indco(2, ind+1)
+        iz = indco(3, ind+1)
+        CALL set_label(rlab(ind+1), ix, iy, iz)
+      ENDDO
+
+      ! Allocate dbcsr momentum matrix in ao basis
+      NULLIFY (magmom_ao, matrix_s)
+      CALL get_qs_env(qs_env=qs_env, matrix_s=matrix_s)
+      CALL dbcsr_allocate_matrix_set(magmom_ao, nm)
+      DO ind = 1, nm
+         ALLOCATE (magmom_ao(ind)%matrix)
+         CALL dbcsr_desymmetrize(matrix_s(1)%matrix, magmom_ao(ind)%matrix) !, "magmom_ao")
+         CALL dbcsr_set(magmom_ao(ind)%matrix, 0.0_dp)
+      END DO
+
+      ! Calculate linear momentum matrix in ao basis
+      CALL build_local_magmom_matrix(qs_env, magmom_ao, nm, ref_point=rcc)
+
+      NULLIFY(rho, dft_control)
+      CALL get_qs_env(qs_env = qs_env, &
+                      dft_control = dft_control, &
+                      rho = rho)
+
+      ! Real part of the density
+      NULLIFY(rho_ao)
+      CALL qs_rho_get(rho, rho_ao = rho_ao)
+
+      NULLIFY (mat_tmp_ao)
+      ALLOCATE (mat_tmp_ao)
+      CALL dbcsr_desymmetrize(matrix_s(1)%matrix, mat_tmp_ao)
+
+      ! Calculate expectation value over real part
+      DO ind = 1, SIZE(magmom_ao)
+         strace = 0._dp
+         DO ispin = 1, dft_control%nspins            
+            CALL dbcsr_set(mat_tmp_ao, 0.0_dp)
+            CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao(ispin)%matrix, magmom_ao(ind)%matrix, &
+                                   0.0_dp, mat_tmp_ao)
+            CALL dbcsr_trace(mat_tmp_ao, trace)
+            strace = strace+trace
+         END DO
+         magmom(ind) = strace
+      END DO
+
+      ! imaginary part of the density for RTP
+      IF (qs_env%run_rtp) THEN
+        NULLIFY(rho_ao_im)
+        CALL qs_rho_get(rho, rho_ao_im=rho_ao_im)
+
+        ! Calculate expectation value over imaginary part
+        DO ind = 1, SIZE(magmom_ao)
+           strace = 0._dp
+           DO ispin = 1, dft_control%nspins              
+              CALL dbcsr_set(mat_tmp_ao, 0.0_dp)
+              CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao_im(ispin)%matrix, magmom_ao(ind)%matrix, &
+                                     0.0_dp, mat_tmp_ao)
+              CALL dbcsr_trace(mat_tmp_ao, trace)
+              strace = strace+trace
+           END DO
+           magmom(ind) = magmom(ind) + strace
+        END DO        
+      ENDIF
+
+      CALL dbcsr_deallocate_matrix_set(magmom_ao)
+      CALL dbcsr_deallocate_matrix(mat_tmp_ao)
+
+      CALL print_moments_vel(unit_number, magmom, rlab)
+
+      DEALLOCATE(magmom)
+      DEALLOCATE(rlab)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE qs_moment_magnetic
 
 
 ! **************************************************************************************************
@@ -1691,7 +1814,7 @@ CONTAINS
       END DO
 
       ! Calculate linear momentum matrix in ao basis
-      CALL build_lin_mom_matrix(qs_env, momenta_ao)
+      CALL build_lin_mom_matrix_antisym(qs_env, momenta_ao)
 
       NULLIFY(rho, dft_control)
       CALL get_qs_env(qs_env = qs_env, &

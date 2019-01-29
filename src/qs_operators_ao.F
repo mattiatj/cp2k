@@ -53,7 +53,7 @@ MODULE qs_operators_ao
 ! *** Public subroutines ***
 
    PUBLIC :: p_xyz_ao, rRc_xyz_ao, rRc_xyz_der_ao
-   PUBLIC :: build_lin_mom_matrix, build_ang_mom_matrix
+   PUBLIC :: build_lin_mom_matrix, build_ang_mom_matrix, build_lin_mom_matrix_antisym
 
 CONTAINS
 
@@ -67,6 +67,229 @@ CONTAINS
 !> \version 1.0
 ! **************************************************************************************************
    SUBROUTINE build_lin_mom_matrix(qs_env, matrix)
+
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix
+
+      CHARACTER(len=*), PARAMETER :: routineN = 'build_lin_mom_matrix', &
+         routineP = moduleN//':'//routineN
+
+      INTEGER :: handle, i, iatom, icol, ikind, inode, irow, iset, jatom, jkind, jset, last_jatom, &
+         ldai, maxco, maxlgto, maxsgf, natom, ncoa, ncob, neighbor_list_id, nkind, nseta, nsetb, &
+         sgfa, sgfb
+      INTEGER, DIMENSION(:), POINTER                     :: la_max, la_min, lb_max, lb_min, npgfa, &
+                                                            npgfb, nsgfa, nsgfb
+      INTEGER, DIMENSION(:, :), POINTER                  :: first_sgfa, first_sgfb
+      LOGICAL                                            :: found, new_atom_b
+      REAL(KIND=dp)                                      :: dab, rab2
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :)        :: work
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: intab, rr_work
+      REAL(KIND=dp), DIMENSION(3)                        :: rab
+      REAL(KIND=dp), DIMENSION(:), POINTER               :: set_radius_a, set_radius_b
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: rpgfa, rpgfb, sphi_a, sphi_b, zeta, zetb
+      TYPE(block_p_type), ALLOCATABLE, DIMENSION(:)      :: integral
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(cp_logger_type), POINTER                      :: logger
+      TYPE(cp_para_env_type), POINTER                    :: para_env
+      TYPE(gto_basis_set_p_type), DIMENSION(:), POINTER  :: basis_set_list
+      TYPE(gto_basis_set_type), POINTER                  :: basis_set_a, basis_set_b
+      TYPE(neighbor_list_iterator_p_type), &
+         DIMENSION(:), POINTER                           :: nl_iterator
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_orb
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
+      TYPE(qs_kind_type), POINTER                        :: qs_kind
+
+      CALL timeset(routineN, handle)
+
+      NULLIFY (cell, sab_orb, qs_kind_set, particle_set, para_env)
+      NULLIFY (logger)
+
+      logger => cp_get_default_logger()
+
+      CALL get_qs_env(qs_env=qs_env, &
+                      qs_kind_set=qs_kind_set, &
+                      particle_set=particle_set, &
+                      neighbor_list_id=neighbor_list_id, &
+                      para_env=para_env, &
+                      sab_orb=sab_orb, &
+                      cell=cell)
+
+      nkind = SIZE(qs_kind_set)
+      natom = SIZE(particle_set)
+
+!   *** Allocate work storage ***
+
+      CALL get_qs_kind_set(qs_kind_set=qs_kind_set, &
+                           maxco=maxco, &
+                           maxlgto=maxlgto, &
+                           maxsgf=maxsgf)
+
+      ldai = ncoset(maxlgto+1)
+      CALL init_orbital_pointers(ldai)
+
+      ALLOCATE (rr_work(ldai, ldai, 3), intab(maxco, maxco, 3), work(maxco, maxsgf), integral(3))
+      rr_work(:, :, :) = 0.0_dp
+      intab(:, :, :) = 0.0_dp
+      work(:, :) = 0.0_dp
+
+      ALLOCATE (basis_set_list(nkind))
+      DO ikind = 1, nkind
+         qs_kind => qs_kind_set(ikind)
+         CALL get_qs_kind(qs_kind=qs_kind, basis_set=basis_set_a)
+         IF (ASSOCIATED(basis_set_a)) THEN
+            basis_set_list(ikind)%gto_basis_set => basis_set_a
+         ELSE
+            NULLIFY (basis_set_list(ikind)%gto_basis_set)
+         END IF
+      END DO
+      CALL neighbor_list_iterator_create(nl_iterator, sab_orb)
+      DO WHILE (neighbor_list_iterate(nl_iterator) == 0)
+         CALL get_iterator_info(nl_iterator, ikind=ikind, jkind=jkind, inode=inode, &
+                                iatom=iatom, jatom=jatom, r=rab)
+         basis_set_a => basis_set_list(ikind)%gto_basis_set
+         IF (.NOT. ASSOCIATED(basis_set_a)) CYCLE
+         basis_set_b => basis_set_list(jkind)%gto_basis_set
+         IF (.NOT. ASSOCIATED(basis_set_b)) CYCLE
+         ! basis ikind
+         first_sgfa => basis_set_a%first_sgf
+         la_max => basis_set_a%lmax
+         la_min => basis_set_a%lmin
+         npgfa => basis_set_a%npgf
+         nseta = basis_set_a%nset
+         nsgfa => basis_set_a%nsgf_set
+         rpgfa => basis_set_a%pgf_radius
+         set_radius_a => basis_set_a%set_radius
+         sphi_a => basis_set_a%sphi
+         zeta => basis_set_a%zet
+         ! basis jkind
+         first_sgfb => basis_set_b%first_sgf
+         lb_max => basis_set_b%lmax
+         lb_min => basis_set_b%lmin
+         npgfb => basis_set_b%npgf
+         nsetb = basis_set_b%nset
+         nsgfb => basis_set_b%nsgf_set
+         rpgfb => basis_set_b%pgf_radius
+         set_radius_b => basis_set_b%set_radius
+         sphi_b => basis_set_b%sphi
+         zetb => basis_set_b%zet
+
+         IF (inode == 1) last_jatom = 0
+         IF (jatom /= last_jatom) THEN
+            new_atom_b = .TRUE.
+            last_jatom = jatom
+         ELSE
+            new_atom_b = .FALSE.
+         END IF
+
+         IF (new_atom_b) THEN
+            IF (iatom <= jatom) THEN
+               irow = iatom
+               icol = jatom
+            ELSE
+               irow = jatom
+               icol = iatom
+            END IF
+
+            DO i = 1, 3
+               NULLIFY (integral(i)%block)
+               CALL dbcsr_get_block_p(matrix=matrix(i)%matrix, &
+                                      row=irow, col=icol, BLOCK=integral(i)%block, found=found)
+               CPASSERT(ASSOCIATED(INTEGRAL(i)%block))
+            ENDDO
+         END IF
+
+         rab2 = rab(1)*rab(1)+rab(2)*rab(2)+rab(3)*rab(3)
+         dab = SQRT(rab2)
+
+         DO iset = 1, nseta
+
+            ncoa = npgfa(iset)*ncoset(la_max(iset))
+            sgfa = first_sgfa(1, iset)
+
+            DO jset = 1, nsetb
+
+               IF (set_radius_a(iset)+set_radius_b(jset) < dab) CYCLE
+
+               ncob = npgfb(jset)*ncoset(lb_max(jset))
+               sgfb = first_sgfb(1, jset)
+
+               ! *** Calculate the primitive fermi contact integrals ***
+
+               CALL lin_mom(la_max(iset), la_min(iset), npgfa(iset), &
+                            rpgfa(:, iset), zeta(:, iset), &
+                            lb_max(jset), lb_min(jset), npgfb(jset), &
+                            rpgfb(:, jset), zetb(:, jset), &
+                            rab, intab, SIZE(rr_work, 1), rr_work)
+
+               ! *** Contraction step ***
+
+               DO i = 1, 3
+
+                  CALL dgemm("N", "N", ncoa, nsgfb(jset), ncob, &
+                             1.0_dp, intab(1, 1, i), SIZE(intab, 1), &
+                             sphi_b(1, sgfb), SIZE(sphi_b, 1), &
+                             0.0_dp, work(1, 1), SIZE(work, 1))
+
+                  IF (iatom <= jatom) THEN
+
+                     CALL dgemm("T", "N", nsgfa(iset), nsgfb(jset), ncoa, &
+                                1.0_dp, sphi_a(1, sgfa), SIZE(sphi_a, 1), &
+                                work(1, 1), SIZE(work, 1), &
+                                1.0_dp, integral(i)%block(sgfa, sgfb), &
+                                SIZE(integral(i)%block, 1))
+
+                  ELSE
+
+                     CALL dgemm("T", "N", nsgfb(jset), nsgfa(iset), ncoa, &
+                                -1.0_dp, work(1, 1), SIZE(work, 1), &
+                                sphi_a(1, sgfa), SIZE(sphi_a, 1), &
+                                1.0_dp, integral(i)%block(sgfb, sgfa), &
+                                SIZE(integral(i)%block, 1))
+
+                  ENDIF
+
+               ENDDO
+
+            ENDDO
+
+         ENDDO
+
+      END DO
+      CALL neighbor_list_iterator_release(nl_iterator)
+
+      ! *** Release work storage ***
+
+      DEALLOCATE (intab, work, integral, basis_set_list)
+
+!   *** Print the spin orbit matrix, if requested ***
+
+      !IF (BTEST(cp_print_key_should_output(logger%iter_info,&
+      !     qs_env%input,"DFT%PRINT%AO_MATRICES/LINEAR_MOMENTUM"),cp_p_file)) THEN
+      !   iw = cp_print_key_unit_nr(logger,qs_env%input,"DFT%PRINT%AO_MATRICES/LINEA_MOMENTUM",&
+      !        extension=".Log")
+      !   CALL cp_dbcsr_write_sparse_matrix(matrix(1)%matrix,4,6,qs_env,para_env,output_unit=iw)
+      !   CALL cp_dbcsr_write_sparse_matrix(matrix(2)%matrix,4,6,qs_env,para_env,output_unit=iw)
+      !   CALL cp_dbcsr_write_sparse_matrix(matrix(3)%matrix,4,6,qs_env,para_env,output_unit=iw)
+      !   CALL cp_print_key_finished_output(iw,logger,qs_env%input,&
+      !        "DFT%PRINT%AO_MATRICES/LINEAR_MOMENTUM")
+      !END IF
+
+      CALL timestop(handle)
+
+   END SUBROUTINE build_lin_mom_matrix
+
+! **************************************************************************************************
+!> \brief   Calculation of the linear momemtum matrix over
+!>          Cartesian Gaussian functions. Now antisymmetric.
+!> \param qs_env ...
+!> \param matrix ...
+!> \date    27.02.2009
+!> \author  VW
+!> \version 1.0
+! **************************************************************************************************
+   SUBROUTINE build_lin_mom_matrix_antisym(qs_env, matrix)
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix
@@ -232,23 +455,14 @@ CONTAINS
                              sphi_b(1, sgfb), SIZE(sphi_b, 1), &
                              0.0_dp, work(1, 1), SIZE(work, 1))
 
-                  ! IF (iatom <= jatom) THEN
 
-                     CALL dgemm("T", "N", nsgfa(iset), nsgfb(jset), ncoa, &
-                                1.0_dp, sphi_a(1, sgfa), SIZE(sphi_a, 1), &
-                                work(1, 1), SIZE(work, 1), &
-                                1.0_dp, integral(i)%block(sgfa, sgfb), &
-                                SIZE(integral(i)%block, 1))
+                  CALL dgemm("T", "N", nsgfa(iset), nsgfb(jset), ncoa, &
+                             1.0_dp, sphi_a(1, sgfa), SIZE(sphi_a, 1), &
+                             work(1, 1), SIZE(work, 1), &
+                             1.0_dp, integral(i)%block(sgfa, sgfb), &
+                             SIZE(integral(i)%block, 1))
 
-                  ! ELSE
 
-                  !    CALL dgemm("T", "N", nsgfb(jset), nsgfa(iset), ncoa, &
-                  !               -1.0_dp, work(1, 1), SIZE(work, 1), &
-                  !               sphi_a(1, sgfa), SIZE(sphi_a, 1), &
-                  !               1.0_dp, integral(i)%block(sgfb, sgfa), &
-                  !               SIZE(integral(i)%block, 1))
-
-                  ! ENDIF
 
                ENDDO
 
@@ -263,22 +477,9 @@ CONTAINS
 
       DEALLOCATE (intab, work, integral, basis_set_list)
 
-!   *** Print the spin orbit matrix, if requested ***
-
-      !IF (BTEST(cp_print_key_should_output(logger%iter_info,&
-      !     qs_env%input,"DFT%PRINT%AO_MATRICES/LINEAR_MOMENTUM"),cp_p_file)) THEN
-      !   iw = cp_print_key_unit_nr(logger,qs_env%input,"DFT%PRINT%AO_MATRICES/LINEA_MOMENTUM",&
-      !        extension=".Log")
-      !   CALL cp_dbcsr_write_sparse_matrix(matrix(1)%matrix,4,6,qs_env,para_env,output_unit=iw)
-      !   CALL cp_dbcsr_write_sparse_matrix(matrix(2)%matrix,4,6,qs_env,para_env,output_unit=iw)
-      !   CALL cp_dbcsr_write_sparse_matrix(matrix(3)%matrix,4,6,qs_env,para_env,output_unit=iw)
-      !   CALL cp_print_key_finished_output(iw,logger,qs_env%input,&
-      !        "DFT%PRINT%AO_MATRICES/LINEAR_MOMENTUM")
-      !END IF
-
       CALL timestop(handle)
 
-   END SUBROUTINE build_lin_mom_matrix
+   END SUBROUTINE build_lin_mom_matrix_antisym
 
 ! **************************************************************************************************
 !> \brief   Calculation of the primitive paramagnetic spin orbit integrals over
