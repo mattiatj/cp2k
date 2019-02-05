@@ -99,7 +99,7 @@ CONTAINS
       CHARACTER(len=*), PARAMETER :: routineN = 'rt_prop_setup', routineP = moduleN//':'//routineN
 
       INTEGER                                            :: aspc_order
-      LOGICAL                                            :: magnetic_moment, lin_mom
+      LOGICAL                                            :: lin_mom, magnetic_moment
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(global_environment_type), POINTER             :: globenv
       TYPE(qs_energy_type), POINTER                      :: energy
@@ -148,11 +148,11 @@ CONTAINS
       CALL section_vals_get(hfx_sections, explicit=rtp%do_hfx)
       CALL section_vals_val_get(print_moments_section, "MAGNETIC", l_val=magnetic_moment)
       CALL section_vals_val_get(print_moments_section, "LIN_MOM", l_val=lin_mom)
-      
-      ! Track imagniary part of the density if either magn. moments or the expectation value of 
-      ! the linear momentum are requested            
+
+      ! Track imagniary part of the density if either magn. moments or the expectation value of
+      ! the linear momentum are requested
       rtp%track_imag = (magnetic_moment .OR. lin_mom)
-      
+
       ! Hmm, not really like to initialize with the structure of S but I reckon it is
       ! done everywhere like this
       IF (rtp%do_hfx .OR. rtp%track_imag) &

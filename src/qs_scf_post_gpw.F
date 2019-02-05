@@ -1129,7 +1129,7 @@ CONTAINS
          vel_gauge = section_get_lval(section_vals=input, &
                                      keyword_name="DFT%PRINT%MOMENTS%VEL_GAUGE")
          lin_mom = section_get_lval(section_vals=input, &
-                                     keyword_name="DFT%PRINT%MOMENTS%LIN_MOM")
+                                    keyword_name="DFT%PRINT%MOMENTS%LIN_MOM")
 
          NULLIFY (ref_point)
          CALL section_vals_val_get(input, "DFT%PRINT%MOMENTS%REF_POINT", r_vals=ref_point)
@@ -1169,7 +1169,7 @@ CONTAINS
             ! IF (periodic) THEN
             !   CPWARN("Velocity representation not implemented for periodic calculations!")
             ! ELSE
-              CALL qs_moment_vel(qs_env, unit_nr)
+            CALL qs_moment_vel(qs_env, unit_nr)
             ! END IF
          END IF
 
