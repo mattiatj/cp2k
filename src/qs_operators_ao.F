@@ -196,7 +196,7 @@ CONTAINS
                NULLIFY (integral(i)%block)
                CALL dbcsr_get_block_p(matrix=matrix(i)%matrix, &
                                       row=irow, col=icol, BLOCK=integral(i)%block, found=found)
-               integral(i)%block = 0._dp
+               ! integral(i)%block = 0._dp
                CPASSERT(ASSOCIATED(INTEGRAL(i)%block))
             ENDDO
          END IF
@@ -452,14 +452,14 @@ CONTAINS
       TYPE(neighbor_list_iterator_p_type), &
          DIMENSION(:), POINTER                           :: nl_iterator
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-         POINTER                                         :: sab_orb
+         POINTER                                         :: sab_all
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(qs_kind_type), POINTER                        :: qs_kind
 
       CALL timeset(routineN, handle)
 
-      NULLIFY (cell, sab_orb, qs_kind_set, particle_set, para_env)
+      NULLIFY (cell, sab_all, qs_kind_set, particle_set, para_env)
       NULLIFY (logger)
 
       logger => cp_get_default_logger()
@@ -469,7 +469,7 @@ CONTAINS
                       particle_set=particle_set, &
                       neighbor_list_id=neighbor_list_id, &
                       para_env=para_env, &
-                      sab_orb=sab_orb, &
+                      sab_all=sab_all, &
                       cell=cell)
 
       nkind = SIZE(qs_kind_set)
@@ -500,7 +500,7 @@ CONTAINS
             NULLIFY (basis_set_list(ikind)%gto_basis_set)
          END IF
       END DO
-      CALL neighbor_list_iterator_create(nl_iterator, sab_orb)
+      CALL neighbor_list_iterator_create(nl_iterator, sab_all)
       DO WHILE (neighbor_list_iterate(nl_iterator) == 0)
          CALL get_iterator_info(nl_iterator, ikind=ikind, jkind=jkind, inode=inode, &
                                 iatom=iatom, jatom=jatom, r=rab)
@@ -542,19 +542,19 @@ CONTAINS
          END IF
 
          IF (new_atom_b) THEN
-            IF (iatom <= jatom) THEN
+            ! IF (iatom <= jatom) THEN
                irow = iatom
                icol = jatom
-            ELSE
-               irow = jatom
-               icol = iatom
-            END IF
+            ! ELSE
+            !    irow = jatom
+            !    icol = iatom
+            ! END IF
 
             DO i = 1, 3
                NULLIFY (INTEGRAL(i)%block)
                CALL dbcsr_get_block_p(matrix=matrix(i)%matrix, &
                                       row=irow, col=icol, BLOCK=INTEGRAL(i)%block, found=found)
-               integral(i)%block = 0._dp
+               ! integral(i)%block = 0._dp
                CPASSERT(ASSOCIATED(INTEGRAL(i)%block))
             ENDDO
          END IF
@@ -601,7 +601,7 @@ CONTAINS
                              sphi_b(1, sgfb), SIZE(sphi_b, 1), &
                              0.0_dp, work(1, 1), SIZE(work, 1))
 
-                  IF (iatom <= jatom) THEN
+                  ! IF (iatom <= jatom) THEN
 
                      CALL dgemm("T", "N", nsgfa(iset), nsgfb(jset), ncoa, &
                                 1.0_dp, sphi_a(1, sgfa), SIZE(sphi_a, 1), &
@@ -609,15 +609,13 @@ CONTAINS
                                 1.0_dp, integral(i)%block(sgfa, sgfb), &
                                 SIZE(integral(i)%block, 1))
 
-                  ELSE
-
-                     CALL dgemm("T", "N", nsgfb(jset), nsgfa(iset), ncoa, &
-                                -1.0_dp, work(1, 1), SIZE(work, 1), &
-                                sphi_a(1, sgfa), SIZE(sphi_a, 1), &
-                                1.0_dp, integral(i)%block(sgfb, sgfa), &
-                                SIZE(integral(i)%block, 1))
-
-                  ENDIF
+                  ! ELSE
+                  !    CALL dgemm("T", "N", nsgfb(jset), nsgfa(iset), ncoa, &
+                  !               -1.0_dp, work(1, 1), SIZE(work, 1), &
+                  !               sphi_a(1, sgfa), SIZE(sphi_a, 1), &
+                  !               1.0_dp, integral(i)%block(sgfb, sgfa), &
+                  !               SIZE(integral(i)%block, 1))
+                  ! ENDIF
 
                ENDDO
 
@@ -1361,7 +1359,7 @@ CONTAINS
       TYPE(neighbor_list_iterator_p_type), &
          DIMENSION(:), POINTER                           :: nl_iterator
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-         POINTER                                         :: sab_orb
+         POINTER                                         :: sab_all
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(qs_kind_type), POINTER                        :: qs_kind
@@ -1377,7 +1375,7 @@ CONTAINS
 
       NULLIFY (qs_kind, qs_kind_set)
       NULLIFY (cell, particle_set)
-      NULLIFY (sab_orb)
+      NULLIFY (sab_all)
       NULLIFY (difmab, mab, mab_tmp)
       NULLIFY (op_dip, op_dip_der, work)
       NULLIFY (la_max, la_min, lb_max, lb_min, npgfa, npgfb, nsgfa, nsgfb)
@@ -1385,7 +1383,7 @@ CONTAINS
 
       CALL get_qs_env(qs_env=qs_env, qs_kind_set=qs_kind_set, &
                       cell=cell, particle_set=particle_set, &
-                      sab_orb=sab_orb)
+                      sab_all=sab_all)
 
       nkind = SIZE(qs_kind_set)
 
@@ -1436,7 +1434,7 @@ CONTAINS
             NULLIFY (basis_set_list(ikind)%gto_basis_set)
          END IF
       END DO
-      CALL neighbor_list_iterator_create(nl_iterator, sab_orb)
+      CALL neighbor_list_iterator_create(nl_iterator, sab_all)
       DO WHILE (neighbor_list_iterate(nl_iterator) == 0)
          CALL get_iterator_info(nl_iterator, ikind=ikind, jkind=jkind, inode=inode, &
                                 iatom=iatom, jatom=jatom, r=rab)

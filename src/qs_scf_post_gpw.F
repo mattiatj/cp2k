@@ -169,8 +169,7 @@ MODULE qs_scf_post_gpw
    USE qs_moments,                      ONLY: qs_moment_berry_phase,&
                                               qs_moment_locop,&
                                               qs_moment_vel,&
-                                              qs_com_rrpnl,&
-                                              qs_moment_magnetic
+                                              qs_com_rrpnl
    USE qs_neighbor_list_types,          ONLY: get_iterator_info,&
                                               get_neighbor_list_set_p,&
                                               neighbor_list_iterate,&
@@ -1161,9 +1160,9 @@ CONTAINS
             END IF
          END IF
 
-         IF (magnetic) THEN
-            CALL qs_moment_magnetic(qs_env, reference, ref_point, unit_nr)
-         ENDIF
+         ! IF (magnetic) THEN
+         !    CALL qs_moment_magnetic(qs_env, reference, ref_point, unit_nr)
+         ! ENDIF
 
          IF (lin_mom) THEN
             ! IF (periodic) THEN
