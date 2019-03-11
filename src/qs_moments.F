@@ -51,9 +51,10 @@ MODULE qs_moments
    USE cp_result_types,                 ONLY: cp_result_type
    USE dbcsr_api,                       ONLY: &
         dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_desymmetrize, &
-        dbcsr_distribution_type, dbcsr_get_block_p, dbcsr_multiply, dbcsr_p_type, dbcsr_set, &
-        dbcsr_trace, dbcsr_type, dbcsr_type_symmetric, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry,&
-        dbcsr_init_p
+        dbcsr_distribution_type, dbcsr_get_block_p, dbcsr_init_p, dbcsr_multiply, dbcsr_p_type, &
+        dbcsr_set, dbcsr_trace, dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_symmetric, &
+        dbcsr_type_no_symmetry 
+
    USE distribution_1d_types,           ONLY: distribution_1d_type
    USE kinds,                           ONLY: default_string_length,&
                                               dp
@@ -1590,7 +1591,7 @@ CONTAINS
          nm = 3 ! only first moments         
          NULLIFY (magmom)
          CALL dbcsr_allocate_matrix_set(magmom, nm)
-         CALL initialize_antisym_operator_matrix(qs_env, magmom)
+         CALL initialize_dbcsr_operator_matrix(qs_env, magmom, dbcsr_type_antisymmetric)
          CALL build_local_magmom_matrix(qs_env, magmom, nm, ref_point=rcc)
 
          ALLOCATE (mmom(nm))
@@ -1687,7 +1688,7 @@ CONTAINS
       NULLIFY (momenta_ao, matrix_s)
       CALL dbcsr_allocate_matrix_set(momenta_ao, nm)
 
-      CALL initialize_antisym_operator_matrix(qs_env, momenta_ao)
+      CALL initialize_dbcsr_operator_matrix(qs_env, momenta_ao, dbcsr_type_antisymmetric)
 
       ! Calculate linear momentum matrix in ao basis
       CALL build_lin_mom_matrix(qs_env, momenta_ao)
@@ -2094,7 +2095,6 @@ END SUBROUTINE qs_com_rrpnl
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_op
       CHARACTER(LEN=1), INTENT(IN)                       :: dbcsr_type
-      ! INTEGER, INTENT(IN)                                :: dims
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'initialize_dbcsr_operator_matrix', &
          routineP = moduleN//':'//routineN
@@ -2145,6 +2145,7 @@ END SUBROUTINE qs_com_rrpnl
 
       DEALLOCATE (row_blk_sizes)
 
+
       DO idir = 2, SIZE(matrix_op)
          ALLOCATE (matrix_op(idir)%matrix)
          CALL dbcsr_init_p(matrix_op(idir)%matrix)
@@ -2155,5 +2156,8 @@ END SUBROUTINE qs_com_rrpnl
 
       CALL timestop(handle)
 
-   END SUBROUTINE print_first_moments
+   END SUBROUTINE initialize_dbcsr_operator_matrix
+
+END MODULE qs_moments
+
 
