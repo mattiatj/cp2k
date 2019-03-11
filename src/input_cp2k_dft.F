@@ -1652,7 +1652,7 @@ CONTAINS
                           lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(print_key, keyword)
       CALL keyword_release(keyword)
-      CALL keyword_create(keyword=keyword, &
+      CALL keyword_create(keyword, __LOCATION__, &
                           name="COM_RRPNL", &
                           description="Calculate [[r,V_nl], r], only implemented without periodic boundaries", &
                           usage="COM_RRPNL .TRUE.", &
@@ -1662,7 +1662,7 @@ CONTAINS
                           lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(print_key, keyword)
       CALL keyword_release(keyword)      
-      CALL keyword_create(keyword=keyword, &
+      CALL keyword_create(keyword, __LOCATION__, &
                           name="VEL_GAUGE", &
                           description="Track linear momentum for RTP velocity representation of the polarizability tensor", &
                           usage="VEL_GAUGE yes", &
@@ -1672,10 +1672,20 @@ CONTAINS
                           lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(print_key, keyword)
       CALL keyword_release(keyword)
-      CALL keyword_create(keyword=keyword, &
+      CALL keyword_create(keyword, __LOCATION__, &
                           name="LIN_MOM", &
                           description="Track linear momentum, only implemented without periodic boundaries", &
                           usage="LIN_MOM yes", &
+                          repeats=.FALSE., &
+                          n_var=1, &
+                          default_l_val=.FALSE., &
+                          lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, &
+                          name="COM_NONLOC", &
+                          description="include nonlocal commutator in the calculation of the linear momentum", &
+                          usage="COM_NONLOC yes", &
                           repeats=.FALSE., &
                           n_var=1, &
                           default_l_val=.FALSE., &
@@ -8710,6 +8720,13 @@ CONTAINS
                           " and not for restarts (RT_RESTART).", &
                           usage="PERIODIC", &
                           default_l_val=.TRUE., lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="COM_NONLOC", &
+                          description="Include non local commutator for the application of a periodic delta pulse", &
+                          usage="COM_NONLOC", &
+                          default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 

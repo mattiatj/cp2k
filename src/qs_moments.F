@@ -103,7 +103,7 @@ MODULE qs_moments
    PUBLIC :: build_berry_moment_matrix, build_local_moment_matrix
    PUBLIC :: build_berry_kpoint_matrix
    PUBLIC :: qs_moment_berry_phase, qs_moment_locop, qs_moment_vel
-   PUBLIC :: qs_com_rrpnl
+   PUBLIC :: qs_com_rrpnl, initialize_dbcsr_operator_matrix
 
 CONTAINS
 
@@ -1650,20 +1650,25 @@ CONTAINS
 !> \param qs_env ...
 !> \param unit_number ...
 ! **************************************************************************************************
-   SUBROUTINE qs_moment_vel(qs_env, unit_number)
+   SUBROUTINE qs_moment_vel(qs_env, com_nonloc, unit_number)
       TYPE(qs_environment_type), POINTER                 :: qs_env
+      LOGICAL, INTENT(IN)                                :: com_nonloc
       INTEGER, INTENT(IN)                                :: unit_number
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'qs_moment_vel', routineP = moduleN//':'//routineN
 
       CHARACTER(LEN=8), ALLOCATABLE, DIMENSION(:)        :: rlab
-      CHARACTER(LEN=default_string_length)               :: description
+      CHARACTER(LEN=default_string_length)               :: description, description_nonloc
       INTEGER                                            :: handle, ind, ispin, ix, iy, iz, nm
-      REAL(dp)                                           :: strace, trace
-      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: momenta
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, momenta_ao, rho_ao, rho_ao_im
+      REAL(dp)                                           :: eps_ppnl, strace, trace
+      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: momenta, momenta_nonloc
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, matrix_vr, momenta_ao,&
+                                                            rho_ao, rho_ao_im
       TYPE(dbcsr_type), POINTER                          :: mat_tmp_ao
       TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_all, sap_ppnl
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(qs_rho_type), POINTER                         :: rho
 
       CPASSERT(ASSOCIATED(qs_env))
@@ -1674,6 +1679,8 @@ CONTAINS
       ALLOCATE (momenta(nm))
       ALLOCATE (rlab(nm+1))
       momenta = 0.0_dp
+      ALLOCATE (momenta_nonloc(nm))
+      momenta_nonloc = 0.0_dp
       rlab = ""
 
       ! get labels
@@ -1726,6 +1733,19 @@ CONTAINS
          NULLIFY (rho_ao_im)
          CALL qs_rho_get(rho, rho_ao_im=rho_ao_im)
 
+         IF (com_nonloc) THEN           
+           NULLIFY(sap_ppnl, sab_all, qs_kind_set)
+           CALL get_qs_env(qs_env,&
+                           sap_ppnl=sap_ppnl,&
+                           sab_all=sab_all,&
+                           qs_kind_set=qs_kind_set)
+           eps_ppnl = dft_control%qs_control%eps_ppnl
+           NULLIFY(matrix_vr)
+           CALL dbcsr_allocate_matrix_set(matrix_vr, 3)
+           CALL initialize_dbcsr_operator_matrix(qs_env, matrix_vr, dbcsr_type_no_symmetry)
+           CALL build_com_rpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl)   
+         ENDIF
+
          ! Calculate expectation value over imaginary part
          DO ind = 1, SIZE(momenta_ao)
             strace = 0._dp
@@ -1736,17 +1756,38 @@ CONTAINS
                CALL dbcsr_trace(mat_tmp_ao, trace)
                strace = strace+trace
             END DO
-            momenta(ind) = momenta(ind)+strace
+            momenta(ind) = momenta(ind)+strace            
+
+            ! non local commutator term if desired for response calculations
+            IF (com_nonloc) THEN
+              strace = 0._dp
+              DO ispin = 1, dft_control%nspins
+                 CALL dbcsr_set(mat_tmp_ao, 0.0_dp)
+                 CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao_im(ispin)%matrix, matrix_vr(ind)%matrix, &
+                                     0.0_dp, mat_tmp_ao)
+                 CALL dbcsr_trace(mat_tmp_ao, trace)
+                 strace = strace + trace
+              END DO
+              momenta_nonloc(ind) = momenta(ind) - strace
+            ENDIF
          END DO
+
+         IF (com_nonloc) CALL dbcsr_deallocate_matrix_set(matrix_vr)
+
       ENDIF
 
       CALL dbcsr_deallocate_matrix_set(momenta_ao)
       CALL dbcsr_deallocate_matrix(mat_tmp_ao)
 
-      description = "Expectation value of momentum [a.u.]"
+      description = "Expectation value of momentum [a.u.]"      
       CALL print_first_moments(unit_number, momenta, rlab, description)
+      IF (com_nonloc) THEN
+        description_nonloc = "Expectation value of momentum incl. nonloc com [a.u.]"
+        CALL print_first_moments(unit_number, momenta_nonloc, rlab, description_nonloc)
+      ENDIF
 
       DEALLOCATE (momenta)
+      DEALLOCATE (momenta_nonloc)
       DEALLOCATE (rlab)
 
       CALL timestop(handle)

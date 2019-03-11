@@ -1103,8 +1103,8 @@ CONTAINS
 
       CHARACTER(LEN=default_path_length)                 :: filename
       INTEGER                                            :: handle, maxmom, reference, unit_nr
-      LOGICAL                                            :: do_kpoints, magnetic, periodic, vel_gauge,&
-                                                            rrpnl, lin_mom
+      LOGICAL                                            :: com_nonloc, do_kpoints, magnetic, periodic,&
+                                                            vel_gauge, rrpnl, lin_mom
       REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
       TYPE(section_vals_type), POINTER                   :: print_key
 
@@ -1129,6 +1129,8 @@ CONTAINS
                                      keyword_name="DFT%PRINT%MOMENTS%VEL_GAUGE")
          lin_mom = section_get_lval(section_vals=input, &
                                     keyword_name="DFT%PRINT%MOMENTS%LIN_MOM")
+         com_nonloc = section_get_lval(section_vals=input, &
+                                    keyword_name="DFT%PRINT%MOMENTS%COM_NONLOC")
 
          NULLIFY (ref_point)
          CALL section_vals_val_get(input, "DFT%PRINT%MOMENTS%REF_POINT", r_vals=ref_point)
@@ -1168,7 +1170,7 @@ CONTAINS
             ! IF (periodic) THEN
             !   CPWARN("Velocity representation not implemented for periodic calculations!")
             ! ELSE
-            CALL qs_moment_vel(qs_env, unit_nr)
+            CALL qs_moment_vel(qs_env, com_nonloc, unit_nr)
             ! END IF
          END IF
 

@@ -264,11 +264,11 @@ CONTAINS
                   CALL overlap(la_max(iset), la_min(iset), npgfa(iset), rpgfa(:, iset), zeta(:, iset), &
                                lc_max, lc_min, 1, rprjc, zetc, rac, dac, sab(:, :, 1), 0, .FALSE., ai_work, ldai)
                   CALL moment(la_max(iset), npgfa(iset), zeta(:, iset), rpgfa(:, iset), la_min(iset), &
-                              lc_max, 1, zetc, rprjc, 1, rac, (/0._dp, 0._dp, 0._dp/), sab(:, :, 2:4))
+                              lc_max, 1, zetc, rprjc, 1, -rac, (/0._dp, 0._dp, 0._dp/), sab(:, :, 2:4))
                   ! *** Transformation step projector functions (cartesian->spherical) ***
                   DO i = 1, maxder
                      CALL dgemm("N", "N", ncoa, nprjc, ncoc, 1.0_dp, sab(1, 1, i), ldsab, &
-                                cprj(1, prjc), SIZE(cprj, 1), 0.0_dp, work(1, 1, i), ldsab)
+                                cprj(1, prjc), SIZE(cprj, 1), 0.0_dp, work(1, prjc, i), ldsab)
                   END DO
                   prjc = prjc+nprjc
                END DO
@@ -315,13 +315,13 @@ CONTAINS
             iab = ikind+nkind*(jkind-1)
 
             ! *** Create matrix blocks for a new matrix block column ***
-            IF (iatom <= jatom) THEN
+            ! IF (iatom <= jatom) THEN
                irow = iatom
                icol = jatom
-            ELSE
-               irow = jatom
-               icol = iatom
-            END IF
+            ! ELSE
+            !    irow = jatom
+            !    icol = iatom
+            ! END IF
             CALL dbcsr_get_block_p(matrix_rv(1)%matrix, irow, icol, x_block, found)
             CALL dbcsr_get_block_p(matrix_rv(2)%matrix, irow, icol, y_block, found)
             CALL dbcsr_get_block_p(matrix_rv(3)%matrix, irow, icol, z_block, found)
@@ -350,7 +350,7 @@ CONTAINS
                            np = SIZE(acint, 2)
                            nb = SIZE(bcint, 1)
 !$OMP CRITICAL(h_block_critical)
-                           IF (iatom <= jatom) THEN
+                           ! IF (iatom <= jatom) THEN
                               ! Vnl*r
                               CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 1), na, &
                                          bcint(1, 1, 2), nb, 1.0_dp, x_block, SIZE(x_block, 1))
@@ -365,22 +365,22 @@ CONTAINS
                                          bcint(1, 1, 1), nb, 1.0_dp, y_block, SIZE(y_block, 1))
                               CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 4), na, &
                                          bcint(1, 1, 1), nb, 1.0_dp, z_block, SIZE(z_block, 1))
-                           ELSE
-                              ! Vnl*r
-                              CALL dgemm("N", "T", nb, na, np, 1.0_dp, bchint(1, 1, 2), nb, &
-                                         acint(1, 1, 1), na, 1.0_dp, x_block, SIZE(x_block, 1))
-                              CALL dgemm("N", "T", nb, na, np, 1.0_dp, bchint(1, 1, 3), nb, &
-                                         acint(1, 1, 1), na, 1.0_dp, y_block, SIZE(y_block, 1))
-                              CALL dgemm("N", "T", nb, na, np, 1.0_dp, bchint(1, 1, 4), nb, &
-                                         acint(1, 1, 1), na, 1.0_dp, z_block, SIZE(z_block, 1))
-                              ! -r*Vnl
-                              CALL dgemm("N", "T", nb, na, np, -1.0_dp, bchint(1, 1, 1), nb, &
-                                         acint(1, 1, 2), na, 1.0_dp, x_block, SIZE(x_block, 1))
-                              CALL dgemm("N", "T", nb, na, np, -1.0_dp, bchint(1, 1, 1), nb, &
-                                         acint(1, 1, 3), na, 1.0_dp, y_block, SIZE(y_block, 1))
-                              CALL dgemm("N", "T", nb, na, np, -1.0_dp, bchint(1, 1, 1), nb, &
-                                         acint(1, 1, 4), na, 1.0_dp, z_block, SIZE(z_block, 1))
-                           END IF
+                           ! ELSE
+                           !    ! Vnl*r
+                           !    CALL dgemm("N", "T", nb, na, np, 1.0_dp, bchint(1, 1, 2), nb, &
+                           !               acint(1, 1, 1), na, 1.0_dp, x_block, SIZE(x_block, 1))
+                           !    CALL dgemm("N", "T", nb, na, np, 1.0_dp, bchint(1, 1, 3), nb, &
+                           !               acint(1, 1, 1), na, 1.0_dp, y_block, SIZE(y_block, 1))
+                           !    CALL dgemm("N", "T", nb, na, np, 1.0_dp, bchint(1, 1, 4), nb, &
+                           !               acint(1, 1, 1), na, 1.0_dp, z_block, SIZE(z_block, 1))
+                           !    ! -r*Vnl
+                           !    CALL dgemm("N", "T", nb, na, np, -1.0_dp, bchint(1, 1, 1), nb, &
+                           !               acint(1, 1, 2), na, 1.0_dp, x_block, SIZE(x_block, 1))
+                           !    CALL dgemm("N", "T", nb, na, np, -1.0_dp, bchint(1, 1, 1), nb, &
+                           !               acint(1, 1, 3), na, 1.0_dp, y_block, SIZE(y_block, 1))
+                           !    CALL dgemm("N", "T", nb, na, np, -1.0_dp, bchint(1, 1, 1), nb, &
+                           !               acint(1, 1, 4), na, 1.0_dp, z_block, SIZE(z_block, 1))
+                           ! END IF
 !$OMP END CRITICAL(h_block_critical)
                            EXIT ! We have found a match and there can be only one single match
                         END IF
