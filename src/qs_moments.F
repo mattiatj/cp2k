@@ -1663,7 +1663,7 @@ CONTAINS
       CPASSERT(ASSOCIATED(qs_env))
       CALL timeset(routineN, handle)
 
-      nm = 3
+      nm = 6
 
       ALLOCATE (exp_value(nm))
       ALLOCATE (rlab(nm+1))
@@ -1672,10 +1672,10 @@ CONTAINS
 
       ! get labels
       DO ind = 1, nm
-         ix = indco(1, ind+1)
-         iy = indco(2, ind+1)
-         iz = indco(3, ind+1)
-         CALL set_label(rlab(ind+1), ix, iy, iz)
+         ix = indco(1, ind+4)
+         iy = indco(2, ind+4)
+         iz = indco(3, ind+4)
+         CALL set_label(rlab(ind), ix, iy, iz)
       ENDDO
 
       ! Allocate dbcsr momentum matrix in ao basis
@@ -1746,7 +1746,7 @@ CONTAINS
       CALL dbcsr_deallocate_matrix(mat_tmp_ao)
 
       description = "Expectation value of [[r,V_nl],r] [a.u.]"
-      CALL print_first_moments(unit_number, exp_value, rlab, description)
+      CALL print_second_moments(unit_number, exp_value, rlab, description)
 
       DEALLOCATE (exp_value)
       DEALLOCATE (rlab)
@@ -1900,6 +1900,32 @@ END SUBROUTINE qs_com_rrpnl
 
 END SUBROUTINE print_first_moments
 
+
+! **************************************************************************************************
+!> \brief ...
+!> \param unit_number ...
+!> \param momenta ...
+!> \param rlab ...
+!> \param description ...
+! **************************************************************************************************
+   SUBROUTINE print_second_moments(unit_number, momenta, rlab, description)
+      INTEGER, INTENT(IN)                                :: unit_number
+      REAL(dp), DIMENSION(:), INTENT(IN)                 :: momenta
+      CHARACTER(LEN=8), DIMENSION(:)                     :: rlab
+      CHARACTER(LEN=default_string_length), INTENT(IN)   :: description
+
+      INTEGER                                            :: i
+
+      IF (unit_number > 0) THEN
+         WRITE (unit_number, "(T3,A)") description
+         WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
+            (TRIM(rlab(i)), "=", momenta(i), i=1, 3)
+         WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
+            (TRIM(rlab(i)), "=", momenta(i), i=4, 6)
+      ENDIF
+
+END SUBROUTINE print_second_moments
+
 ! **************************************************************************************************
 !> \brief ...
 !> \param qs_env ...
@@ -1909,7 +1935,8 @@ END SUBROUTINE print_first_moments
    SUBROUTINE initialize_dbcsr_operator_matrix(qs_env, matrix_op, dbcsr_type)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_op
-      CHARACTER(LEN=1)                                   :: dbcsr_type
+      CHARACTER(LEN=1), INTENT(IN)                       :: dbcsr_type
+      ! INTEGER, INTENT(IN)                                :: dims
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'initialize_dbcsr_operator_matrix', &
          routineP = moduleN//':'//routineN
@@ -1960,7 +1987,7 @@ END SUBROUTINE print_first_moments
 
       DEALLOCATE (row_blk_sizes)
 
-      DO idir = 2, 3
+      DO idir = 2, SIZE(matrix_op)
          ALLOCATE (matrix_op(idir)%matrix)
          CALL dbcsr_init_p(matrix_op(idir)%matrix)
          CALL dbcsr_copy(matrix_op(idir)%matrix, matrix_op(1)%matrix, &

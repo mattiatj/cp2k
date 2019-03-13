@@ -50,6 +50,10 @@ MODULE commutator_rpnl
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'commutator_rpnl'
 
+   TYPE block_type
+     REAL(KIND=dp), DIMENSION(:,:), POINTER              :: block
+   END TYPE
+
    PUBLIC :: build_com_rpnl, build_com_rrpnl
 
 CONTAINS
@@ -420,7 +424,7 @@ CONTAINS
       INTEGER :: handle, i, iab, iac, iatom, ibc, icol, ikind, ilist, inode, irow, iset, jatom, &
          jkind, jneighbor, kac, katom, kbc, kkind, l, lc_max, lc_min, ldai, ldsab, lppnl, maxco, &
          maxder, maxl, maxlgto, maxlppnl, maxppnl, maxsgf, mepos, na, nb, ncoa, ncoc, nkind, &
-         nlist, nneighbor, nnode, np, nppnl, nprjc, nseta, nsgfa, nthread, prjc, sgfa
+         nlist, nneighbor, nnode, np, nppnl, nprjc, nseta, nsgfa, nthread, prjc, sgfa, ind
       INTEGER, DIMENSION(3)                              :: cell_b, cell_c
       INTEGER, DIMENSION(:), POINTER                     :: la_max, la_min, npgfa, nprj_ppnl, &
                                                             nsgf_seta
@@ -431,8 +435,8 @@ CONTAINS
       REAL(KIND=dp), DIMENSION(1)                        :: rprjc, zetc
       REAL(KIND=dp), DIMENSION(3)                        :: rab, rac
       REAL(KIND=dp), DIMENSION(:), POINTER               :: alpha_ppnl, set_radius_a
-      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: cprj, rpgfa, sphi_a, vprj_ppnl, x_block, &
-                                                            y_block, z_block, zeta
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: cprj, rpgfa, sphi_a, vprj_ppnl, zeta!, &
+                                                            ! x_block, y_block, z_block                                              
       REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: achint, acint, bchint, bcint
       TYPE(alist_type), POINTER                          :: alist_ac, alist_bc
       TYPE(clist_type), POINTER                          :: clist
@@ -445,6 +449,7 @@ CONTAINS
       TYPE(sap_int_type), DIMENSION(:), POINTER          :: sap_int
       TYPE(sgp_potential_p_type), DIMENSION(:), POINTER  :: spotential
       TYPE(sgp_potential_type), POINTER                  :: sgp_potential
+      TYPE(block_type), DIMENSION(:), POINTER            :: blocks
 
       CALL timeset(routineN, handle)
 
@@ -497,7 +502,7 @@ CONTAINS
             END IF
          END DO
 
-         maxder = 4
+         maxder = 10
          nthread = 1
 !$       nthread = omp_get_max_threads()
 
@@ -512,10 +517,10 @@ CONTAINS
 !$OMP          sphi_a, zeta, cprj, lppnl, nppnl, nprj_ppnl, &
 !$OMP          clist, iset, ncoa, sgfa, prjc, work, sab, ai_work, nprjc,  ppnl_radius, &
 !$OMP          ncoc, rpgfa, vprj_ppnl, i, l, gpot, spot, &
-!$OMP          set_radius_a, rprjc, dac, lc_max, lc_min, zetc, alpha_ppnl)
+!$OMP          set_radius_a, rprjc, dac, lc_max, lc_min, zetc, alpha_ppn, ind)
          mepos = 0
 !$       mepos = omp_get_thread_num()
-
+          
          ALLOCATE (sab(ldsab, ldsab, maxder), work(ldsab, ldsab, maxder))
          sab = 0.0_dp
          ALLOCATE (ai_work(ldai, ldai, 1))
@@ -605,7 +610,7 @@ CONTAINS
                   CALL overlap(la_max(iset), la_min(iset), npgfa(iset), rpgfa(:, iset), zeta(:, iset), &
                                lc_max, lc_min, 1, rprjc, zetc, rac, dac, sab(:, :, 1), 0, .FALSE., ai_work, ldai)
                   CALL moment(la_max(iset), npgfa(iset), zeta(:, iset), rpgfa(:, iset), la_min(iset), &
-                              lc_max, 1, zetc, rprjc, 1, -rac, (/0._dp, 0._dp, 0._dp/), sab(:, :, 2:4))
+                              lc_max, 1, zetc, rprjc, 2, -rac, (/0._dp, 0._dp, 0._dp/), sab(:, :, 2:maxder))
                   ! *** Transformation step projector functions (cartesian->spherical) ***
                   DO i = 1, maxder
                      CALL dgemm("N", "N", ncoa, nprjc, ncoc, 1.0_dp, sab(1, 1, i), ldsab, &
@@ -641,12 +646,14 @@ CONTAINS
 !$OMP SHARED  (nl_iterator, basis_set, matrix_rv, &
 !$OMP          sap_int, nkind, eps_ppnl ) &
 !$OMP PRIVATE (mepos, ikind, jkind, iatom, jatom, nlist, ilist, nnode, inode, cell_b, rab, &
-!$OMP          iab, irow, icol, x_block, y_block, z_block, &
+!$OMP          iab, irow, icol, x_block, y_block, z_block, blocks &
 !$OMP          found, iac, ibc, alist_ac, alist_bc, acint, bcint, &
-!$OMP          achint, bchint, na, np, nb, katom, rac, kkind, kac, kbc, i)
+!$OMP          achint, bchint, na, np, nb, katom, rac, kkind, kac, kbc, i, ind)
 
          mepos = 0
 !$       mepos = omp_get_thread_num()
+         NULLIFY(blocks)
+         ALLOCATE(blocks(6))
 
          DO WHILE (neighbor_list_iterate(nl_iterator, mepos=mepos) == 0)
             CALL get_iterator_info(nl_iterator, mepos=mepos, ikind=ikind, jkind=jkind, iatom=iatom, &
@@ -663,12 +670,14 @@ CONTAINS
             !    irow = jatom
             !    icol = iatom
             ! END IF
-            CALL dbcsr_get_block_p(matrix_rv(1)%matrix, irow, icol, x_block, found)
-            CALL dbcsr_get_block_p(matrix_rv(2)%matrix, irow, icol, y_block, found)
-            CALL dbcsr_get_block_p(matrix_rv(3)%matrix, irow, icol, z_block, found)
+
+            DO ind = 1, SIZE(matrix_rv)
+              CALL dbcsr_get_block_p(matrix_rv(ind)%matrix, irow, icol, blocks(ind)%block, found)
+            ENDDO
 
             ! loop over all kinds for projector atom
-            IF (ASSOCIATED(x_block) .AND. ASSOCIATED(y_block) .AND. ASSOCIATED(z_block)) THEN
+            IF (ASSOCIATED(blocks(1)%block) .AND. ASSOCIATED(blocks(2)%block) .AND. ASSOCIATED(blocks(3)%block) &
+              .AND. ASSOCIATED(blocks(4)%block) .AND. ASSOCIATED(blocks(5)%block) .AND. ASSOCIATED(blocks(6)%block) ) THEN
                DO kkind = 1, nkind
                   iac = ikind+nkind*(kkind-1)
                   ibc = jkind+nkind*(kkind-1)
@@ -693,19 +702,75 @@ CONTAINS
 !$OMP CRITICAL(h_block_critical)
                            ! IF (iatom <= jatom) THEN
                               ! Vnl*r
-                              CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 1), na, &
-                                         bcint(1, 1, 2), nb, 1.0_dp, x_block, SIZE(x_block, 1))
-                              CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 1), na, &
-                                         bcint(1, 1, 3), nb, 1.0_dp, y_block, SIZE(y_block, 1))
-                              CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 1), na, &
-                                         bcint(1, 1, 4), nb, 1.0_dp, z_block, SIZE(z_block, 1))
-                              ! -r*Vnl
-                              CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 2), na, &
-                                         bcint(1, 1, 1), nb, 1.0_dp, x_block, SIZE(x_block, 1))
-                              CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 3), na, &
-                                         bcint(1, 1, 1), nb, 1.0_dp, y_block, SIZE(y_block, 1))
-                              CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 4), na, &
-                                         bcint(1, 1, 1), nb, 1.0_dp, z_block, SIZE(z_block, 1))
+                              ! CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 1), na, &
+                              !            bcint(1, 1, 2), nb, 1.0_dp, blocks(1)%block, SIZE(blocks(1)%block, 1))
+                              ! CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 1), na, &
+                              !            bcint(1, 1, 3), nb, 1.0_dp, blocks(2)%block, SIZE(blocks(2)%block, 1))
+                              ! CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 1), na, &
+                              !            bcint(1, 1, 4), nb, 1.0_dp, blocks(3)%block, SIZE(blocks(3)%block, 1))
+                              ! ! -r*Vnl
+                              ! CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 2), na, &
+                              !            bcint(1, 1, 1), nb, 1.0_dp, blocks(1)%block, SIZE(blocks(1)%block, 1))
+                              ! CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 3), na, &
+                              !            bcint(1, 1, 1), nb, 1.0_dp, blocks(2)%block, SIZE(blocks(2)%block, 1))
+                              ! CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 4), na, &
+                              !            bcint(1, 1, 1), nb, 1.0_dp, blocks(3)%block, SIZE(blocks(3)%block, 1))
+
+                              ! + r_alpha * Vnl * r_beta
+                              CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 2), na, &
+                                         bcint(1, 1, 2), nb, 1.0_dp, blocks(1)%block, SIZE(blocks(1)%block, 1))  ! xVx
+                              CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 2), na, &
+                                         bcint(1, 1, 3), nb, 1.0_dp, blocks(2)%block, SIZE(blocks(2)%block, 1))  ! xVy
+                              CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 2), na, &
+                                         bcint(1, 1, 4), nb, 1.0_dp, blocks(3)%block, SIZE(blocks(3)%block, 1))  ! xVz
+                              CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 3), na, &
+                                         bcint(1, 1, 3), nb, 1.0_dp, blocks(4)%block, SIZE(blocks(4)%block, 1))  ! yVy
+                              CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 3), na, &
+                                         bcint(1, 1, 4), nb, 1.0_dp, blocks(5)%block, SIZE(blocks(5)%block, 1))  ! yVz
+                              CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 4), na, &
+                                         bcint(1, 1, 4), nb, 1.0_dp, blocks(6)%block, SIZE(blocks(6)%block, 1))  ! zVz
+
+                              ! + r_beta * Vnl * r_alpha
+                              ! CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 2), na, &
+                              !            bcint(1, 1, 2), nb, 1.0_dp, blocks(1)%block, SIZE(blocks(1)%block, 1))  ! xVx
+                              ! CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 2), na, &
+                              !            bcint(1, 1, 3), nb, 1.0_dp, blocks(2)%block, SIZE(blocks(2)%block, 1))  ! xVy
+                              ! CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 2), na, &
+                              !            bcint(1, 1, 4), nb, 1.0_dp, blocks(3)%block, SIZE(blocks(3)%block, 1))  ! xVz
+                              ! CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 3), na, &
+                              !            bcint(1, 1, 3), nb, 1.0_dp, blocks(4)%block, SIZE(blocks(4)%block, 1))  ! yVy
+                              ! CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 3), na, &
+                              !            bcint(1, 1, 4), nb, 1.0_dp, blocks(5)%block, SIZE(blocks(5)%block, 1))  ! yVz
+                              ! CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 4), na, &
+                              !            bcint(1, 1, 4), nb, 1.0_dp, blocks(6)%block, SIZE(blocks(6)%block, 1))  ! zVz
+
+                              ! - r_alpha * r_beta * Vnl
+                              CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 5), na, &
+                                         bcint(1, 1, 1), nb, 1.0_dp, blocks(1)%block, SIZE(blocks(1)%block, 1))  ! xxV
+                              CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 6), na, &
+                                         bcint(1, 1, 1), nb, 1.0_dp, blocks(2)%block, SIZE(blocks(2)%block, 1))  ! xyV
+                              CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 7), na, &
+                                         bcint(1, 1, 1), nb, 1.0_dp, blocks(3)%block, SIZE(blocks(3)%block, 1))  ! xzV
+                              CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 8), na, &
+                                         bcint(1, 1, 1), nb, 1.0_dp, blocks(4)%block, SIZE(blocks(4)%block, 1))  ! yyV
+                              CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 9), na, &
+                                         bcint(1, 1, 1), nb, 1.0_dp, blocks(5)%block, SIZE(blocks(5)%block, 1))  ! yzV
+                              CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 10), na, &
+                                         bcint(1, 1, 1), nb, 1.0_dp, blocks(6)%block, SIZE(blocks(6)%block, 1))  ! zzV
+
+                              ! - Vnl * r_alpha * r_beta
+                              CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 1), na, &
+                                         bcint(1, 1, 5), nb, 1.0_dp, blocks(1)%block, SIZE(blocks(1)%block, 1))  ! Vxx
+                              CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 1), na, &
+                                         bcint(1, 1, 6), nb, 1.0_dp, blocks(2)%block, SIZE(blocks(2)%block, 1))  ! Vxy
+                              CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 1), na, &
+                                         bcint(1, 1, 7), nb, 1.0_dp, blocks(3)%block, SIZE(blocks(3)%block, 1))  ! Vxz
+                              CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 1), na, &
+                                         bcint(1, 1, 8), nb, 1.0_dp, blocks(4)%block, SIZE(blocks(4)%block, 1))  ! Vyy
+                              CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 1), na, &
+                                         bcint(1, 1, 9), nb, 1.0_dp, blocks(5)%block, SIZE(blocks(5)%block, 1))  ! Vyz
+                              CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 1), na, &
+                                         bcint(1, 1, 10), nb, 1.0_dp, blocks(6)%block, SIZE(blocks(6)%block, 1))  ! Vzz
                            ! ELSE
                            !    ! Vnl*r
                            !    CALL dgemm("N", "T", nb, na, np, 1.0_dp, bchint(1, 1, 2), nb, &
