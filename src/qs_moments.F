@@ -21,7 +21,8 @@ MODULE qs_moments
    USE block_p_types,                   ONLY: block_p_type
    USE cell_types,                      ONLY: cell_type,&
                                               pbc
-   USE commutator_rpnl,                 ONLY: build_com_rrpnl
+   USE commutator_rpnl,                 ONLY: build_com_rrpnl,&
+                                              build_com_rpnl_r
    USE cp_cfm_basic_linalg,             ONLY: cp_cfm_lu_decompose
    USE cp_cfm_types,                    ONLY: cp_cfm_create,&
                                               cp_cfm_get_info,&
@@ -1647,11 +1648,11 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'qs_com_rrpnl', routineP = moduleN//':'//routineN
 
       CHARACTER(LEN=8), ALLOCATABLE, DIMENSION(:)        :: rlab
-      CHARACTER(LEN=default_string_length)               :: description
+      CHARACTER(LEN=default_string_length)               :: description, description_2
       INTEGER                                            :: handle, ind, ispin, ix, iy, iz, nm
       REAL(dp)                                           :: strace, trace, eps_ppnl
-      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: exp_value
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, com_rrpnl, rho_ao, rho_ao_im
+      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: exp_value, exp_value_2
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, com_rrpnl, rho_ao, rho_ao_im, com_rpnl_r
       TYPE(dbcsr_type), POINTER                          :: mat_tmp_ao
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(qs_rho_type), POINTER                         :: rho
@@ -1666,6 +1667,7 @@ CONTAINS
       nm = 6
 
       ALLOCATE (exp_value(nm))
+      ALLOCATE (exp_value_2(9))
       ALLOCATE (rlab(nm+1))
       exp_value = 0.0_dp
       rlab = ""
@@ -1679,10 +1681,12 @@ CONTAINS
       ENDDO
 
       ! Allocate dbcsr momentum matrix in ao basis
-      NULLIFY (com_rrpnl, matrix_s)
+      NULLIFY (com_rrpnl, matrix_s, com_rpnl_r)
       CALL dbcsr_allocate_matrix_set(com_rrpnl, nm)
-
       CALL initialize_dbcsr_operator_matrix(qs_env, com_rrpnl, dbcsr_type_no_symmetry)
+
+      CALL dbcsr_allocate_matrix_set(com_rpnl_r, 9)
+      CALL initialize_dbcsr_operator_matrix(qs_env, com_rpnl_r, dbcsr_type_no_symmetry)      
 
       NULLIFY (rho, dft_control, sab_all, sap_ppnl, qs_kind_set)
       CALL get_qs_env(qs_env=qs_env, &
@@ -1695,6 +1699,8 @@ CONTAINS
       ! Calculate linear momentum matrix in ao basis
       eps_ppnl = dft_control%qs_control%eps_ppnl
       CALL build_com_rrpnl(com_rrpnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl)
+      CALL build_com_rpnl_r(com_rpnl_r, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, .TRUE.)
+
 
       NULLIFY (rho, dft_control)
       CALL get_qs_env(qs_env=qs_env, &
@@ -1724,6 +1730,34 @@ CONTAINS
          exp_value(ind) = strace
       END DO
 
+      ! Calculate expectation value over real part
+      DO ind = 1, SIZE(com_rpnl_r)
+         strace = 0._dp
+         DO ispin = 1, dft_control%nspins
+            CALL dbcsr_set(mat_tmp_ao, 0.0_dp)
+            CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao(ispin)%matrix, com_rpnl_r(ind)%matrix, &
+                                0.0_dp, mat_tmp_ao)
+            CALL dbcsr_trace(mat_tmp_ao, trace)
+            strace = strace+trace
+         END DO
+         exp_value_2(ind) = -strace
+      END DO
+
+      CALL build_com_rpnl_r(com_rpnl_r, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, .FALSE.)
+
+      ! Calculate expectation value over real part
+      DO ind = 1, SIZE(com_rpnl_r)
+         strace = 0._dp
+         DO ispin = 1, dft_control%nspins
+            CALL dbcsr_set(mat_tmp_ao, 0.0_dp)
+            CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao(ispin)%matrix, com_rpnl_r(ind)%matrix, &
+                                0.0_dp, mat_tmp_ao)
+            CALL dbcsr_trace(mat_tmp_ao, trace)
+            strace = strace+trace
+         END DO
+         exp_value_2(ind) = exp_value_2(ind) + strace
+      END DO
+
       ! imaginary part of the density for RTP
       IF (qs_env%run_rtp) THEN
          NULLIFY (rho_ao_im)
@@ -1743,10 +1777,14 @@ CONTAINS
       ENDIF
 
       CALL dbcsr_deallocate_matrix_set(com_rrpnl)
+      CALL dbcsr_deallocate_matrix_set(com_rpnl_r)
       CALL dbcsr_deallocate_matrix(mat_tmp_ao)
 
       description = "Expectation value of [[r,V_nl],r] [a.u.]"
       CALL print_second_moments(unit_number, exp_value, rlab, description)
+
+      description_2 = "Expectation value of [[r,V_nl],r] [a.u.] (2)"
+      CALL print_second_moments(unit_number, exp_value_2, rlab, description_2)
 
       DEALLOCATE (exp_value)
       DEALLOCATE (rlab)
@@ -1922,6 +1960,11 @@ END SUBROUTINE print_first_moments
             (TRIM(rlab(i)), "=", momenta(i), i=1, 3)
          WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
             (TRIM(rlab(i)), "=", momenta(i), i=4, 6)
+        IF (SIZE(momenta) == 9) THEN
+          WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
+            (TRIM(rlab(i)), "=", momenta(i), i=7, 9)
+        ENDIF
+
       ENDIF
 
 END SUBROUTINE print_second_moments
