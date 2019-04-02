@@ -543,8 +543,8 @@ CONTAINS
 
          IF (new_atom_b) THEN
             ! IF (iatom <= jatom) THEN
-               irow = iatom
-               icol = jatom
+            irow = iatom
+            icol = jatom
             ! ELSE
             !    irow = jatom
             !    icol = iatom
@@ -603,11 +603,11 @@ CONTAINS
 
                   ! IF (iatom <= jatom) THEN
 
-                     CALL dgemm("T", "N", nsgfa(iset), nsgfb(jset), ncoa, &
-                                1.0_dp, sphi_a(1, sgfa), SIZE(sphi_a, 1), &
-                                work(1, 1), SIZE(work, 1), &
-                                1.0_dp, integral(i)%block(sgfa, sgfb), &
-                                SIZE(integral(i)%block, 1))
+                  CALL dgemm("T", "N", nsgfa(iset), nsgfb(jset), ncoa, &
+                             1.0_dp, sphi_a(1, sgfa), SIZE(sphi_a, 1), &
+                             work(1, 1), SIZE(work, 1), &
+                             1.0_dp, integral(i)%block(sgfa, sgfb), &
+                             SIZE(integral(i)%block, 1))
 
                   ! ELSE
                   !    CALL dgemm("T", "N", nsgfb(jset), nsgfa(iset), ncoa, &

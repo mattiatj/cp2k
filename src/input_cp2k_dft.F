@@ -1663,9 +1663,9 @@ CONTAINS
       CALL section_add_keyword(print_key, keyword)
       CALL keyword_release(keyword)      
       CALL keyword_create(keyword, __LOCATION__, &
-                          name="VEL_GAUGE", &
-                          description="Track linear momentum for RTP velocity representation of the polarizability tensor", &
-                          usage="VEL_GAUGE yes", &
+                          name="ANG_MOM_COM_NL", &
+                          description="Include non local commutator for angulara momentum calculation", &
+                          usage="ANG_MOM_COM_NL yes", &
                           repeats=.FALSE., &
                           n_var=1, &
                           default_l_val=.FALSE., &

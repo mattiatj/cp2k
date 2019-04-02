@@ -9,7 +9,7 @@
 
 MODULE rt_delta_pulse
    USE cell_types,                      ONLY: cell_type
-   USE commutator_rpnl,                 ONLY: build_com_rpnl   
+   USE commutator_rpnl,                 ONLY: build_com_rpnl
    USE cp_cfm_basic_linalg,             ONLY: cp_cfm_column_scale,&
                                               cp_cfm_gemm
    USE cp_cfm_diag,                     ONLY: cp_cfm_heevd
@@ -45,8 +45,10 @@ MODULE rt_delta_pulse
                                               dbcsr_deallocate_matrix,&
                                               dbcsr_filter,&
                                               dbcsr_p_type,&
-                                              dbcsr_type, &
+                                              dbcsr_type,&
                                               dbcsr_type_no_symmetry
+   USE input_section_types,             ONLY: section_get_lval,&
+                                              section_vals_type
    USE kinds,                           ONLY: dp
    USE mathconstants,                   ONLY: twopi
    USE qs_environment_types,            ONLY: get_qs_env,&
@@ -54,15 +56,11 @@ MODULE rt_delta_pulse
    USE qs_kind_types,                   ONLY: qs_kind_type
    USE qs_mo_types,                     ONLY: get_mo_set,&
                                               mo_set_p_type
-   USE qs_moments,                      ONLY: build_berry_moment_matrix, &
+   USE qs_moments,                      ONLY: build_berry_moment_matrix,&
                                               initialize_dbcsr_operator_matrix
-   USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type                                              
+   USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
    USE rt_propagation_types,            ONLY: get_rtp,&
                                               rt_prop_type
-   USE input_section_types,             ONLY: section_get_lval,&
-                                              section_vals_type
-
-
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -129,7 +127,7 @@ CONTAINS
                       matrix_ks=matrix_ks, &
                       dft_control=dft_control, &
                       input=input)
-      
+
       com_nonloc = section_get_lval(section_vals=input, keyword_name="DFT%REAL_TIME_PROPAGATION%COM_NONLOC")
       CALL get_rtp(rtp=rtp, S_inv=S_inv)
       CALL cp_fm_create(S_chol, matrix_struct=rtp%ao_ao_fmstruct, name="S_chol")
@@ -144,19 +142,19 @@ CONTAINS
       CALL cp_fm_create(mat_ks, matrix_struct=S_inv_fm%matrix_struct, name="mat_ks")
       CALL cp_fm_create(eigenvectors, matrix_struct=S_inv_fm%matrix_struct, name="eigenvectors")
 
-      ! calculate non-local commutator 
+      ! calculate non-local commutator
       IF (com_nonloc) THEN
-        NULLIFY(qs_kind_set, sab_all, sap_ppnl)
-        CALL get_qs_env(qs_env,&
-                        sap_ppnl=sap_ppnl, &
-                        sab_all=sab_all, &
-                        qs_kind_set=qs_kind_set)
-        eps_ppnl = dft_control%qs_control%eps_ppnl
+         NULLIFY (qs_kind_set, sab_all, sap_ppnl)
+         CALL get_qs_env(qs_env, &
+                         sap_ppnl=sap_ppnl, &
+                         sab_all=sab_all, &
+                         qs_kind_set=qs_kind_set)
+         eps_ppnl = dft_control%qs_control%eps_ppnl
 
-        NULLIFY(matrix_vr)
-        CALL dbcsr_allocate_matrix_set(matrix_vr, 3)
-        CALL initialize_dbcsr_operator_matrix(qs_env, matrix_vr, dbcsr_type_no_symmetry)
-        CALL build_com_rpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl)      
+         NULLIFY (matrix_vr)
+         CALL dbcsr_allocate_matrix_set(matrix_vr, 3)
+         CALL initialize_dbcsr_operator_matrix(qs_env, matrix_vr, dbcsr_type_no_symmetry)
+         CALL build_com_rpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl)
       ENDIF
 
       DO ispin = 1, SIZE(matrix_ks)
@@ -201,10 +199,10 @@ CONTAINS
                                             mos_old(2*ispin)%matrix, ncol=nmo)
                CALL cp_fm_scale_and_add(1.0_dp, mos_new(2*ispin-1)%matrix, factor, mos_old(2*ispin)%matrix)
                IF (com_nonloc) THEN
-                 CALL cp_fm_set_all(mos_old(2*ispin)%matrix, 0.0_dp)
-                 CALL cp_dbcsr_sm_fm_multiply(matrix_vr(idir)%matrix, mos_old(2*ispin-1)%matrix, &
-                                              mos_old(2*ispin)%matrix, ncol=nmo)
-                 CALL cp_fm_scale_and_add(1.0_dp, mos_new(2*ispin-1)%matrix, -factor, mos_old(2*ispin)%matrix)
+                  CALL cp_fm_set_all(mos_old(2*ispin)%matrix, 0.0_dp)
+                  CALL cp_dbcsr_sm_fm_multiply(matrix_vr(idir)%matrix, mos_old(2*ispin-1)%matrix, &
+                                               mos_old(2*ispin)%matrix, ncol=nmo)
+                  CALL cp_fm_scale_and_add(1.0_dp, mos_new(2*ispin-1)%matrix, -factor, mos_old(2*ispin)%matrix)
                ENDIF
             ENDIF
          ENDDO
@@ -228,7 +226,7 @@ CONTAINS
          CALL cp_gemm("N", "N", nao, nmo, nvirt, 1.0_dp, virtuals, momentum, 0.0_dp, mos_old(2*ispin)%matrix)
 
          CALL cp_fm_release(virtuals)
-         CALL cp_fm_release(momentum)         
+         CALL cp_fm_release(momentum)
 
          ! orthonormalize afterwards
          CALL cp_fm_struct_create(fm_struct_tmp, para_env=S_inv_fm%matrix_struct%para_env, context=S_inv_fm%matrix_struct%context, &
@@ -293,7 +291,7 @@ CONTAINS
       CALL cp_fm_release(eigenvectors)
 
       IF (com_nonloc) CALL dbcsr_deallocate_matrix_set(matrix_vr)
-      
+
 !***************************************************************
 !remove later
       CALL cp_fm_release(S_inv_fm)

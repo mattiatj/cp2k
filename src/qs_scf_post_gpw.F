@@ -166,10 +166,10 @@ MODULE qs_scf_post_gpw
    USE qs_mo_occupation,                ONLY: set_mo_occupation
    USE qs_mo_types,                     ONLY: get_mo_set,&
                                               mo_set_p_type
-   USE qs_moments,                      ONLY: qs_moment_berry_phase,&
+   USE qs_moments,                      ONLY: qs_com_rrpnl,&
+                                              qs_moment_berry_phase,&
                                               qs_moment_locop,&
-                                              qs_moment_vel,&
-                                              qs_com_rrpnl
+                                              qs_moment_vel
    USE qs_neighbor_list_types,          ONLY: get_iterator_info,&
                                               get_neighbor_list_set_p,&
                                               neighbor_list_iterate,&
@@ -1103,8 +1103,8 @@ CONTAINS
 
       CHARACTER(LEN=default_path_length)                 :: filename
       INTEGER                                            :: handle, maxmom, reference, unit_nr
-      LOGICAL                                            :: com_nonloc, do_kpoints, magnetic, periodic,&
-                                                            vel_gauge, rrpnl, lin_mom
+      LOGICAL                                            :: ang_mom_com_nl, com_nonloc, do_kpoints, &
+                                                            lin_mom, magnetic, periodic, rrpnl
       REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
       TYPE(section_vals_type), POINTER                   :: print_key
 
@@ -1124,13 +1124,13 @@ CONTAINS
          magnetic = section_get_lval(section_vals=input, &
                                      keyword_name="DFT%PRINT%MOMENTS%MAGNETIC")
          rrpnl = section_get_lval(section_vals=input, &
-                                     keyword_name="DFT%PRINT%MOMENTS%COM_RRPNL")
-         vel_gauge = section_get_lval(section_vals=input, &
-                                     keyword_name="DFT%PRINT%MOMENTS%VEL_GAUGE")
+                                  keyword_name="DFT%PRINT%MOMENTS%COM_RRPNL")
          lin_mom = section_get_lval(section_vals=input, &
                                     keyword_name="DFT%PRINT%MOMENTS%LIN_MOM")
          com_nonloc = section_get_lval(section_vals=input, &
-                                    keyword_name="DFT%PRINT%MOMENTS%COM_NONLOC")
+                                       keyword_name="DFT%PRINT%MOMENTS%COM_NONLOC")
+         ang_mom_com_nl = section_get_lval(section_vals=input, &
+                                           keyword_name="DFT%PRINT%MOMENTS%ANG_MOM_COM_NL")
 
          NULLIFY (ref_point)
          CALL section_vals_val_get(input, "DFT%PRINT%MOMENTS%REF_POINT", r_vals=ref_point)
@@ -1157,7 +1157,7 @@ CONTAINS
             IF (periodic) THEN
                CALL qs_moment_berry_phase(qs_env, magnetic, maxmom, reference, ref_point, unit_nr)
             ELSE
-               CALL qs_moment_locop(qs_env, magnetic, maxmom, reference, ref_point, unit_nr)
+               CALL qs_moment_locop(qs_env, magnetic, ang_mom_com_nl, maxmom, reference, ref_point, unit_nr)
                IF (rrpnl) CALL qs_com_rrpnl(qs_env, unit_nr)
             END IF
          END IF
