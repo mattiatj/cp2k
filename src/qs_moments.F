@@ -22,7 +22,9 @@ MODULE qs_moments
    USE cell_types,                      ONLY: cell_type,&
                                               pbc
    USE commutator_rpnl,                 ONLY: build_com_rrpnl,&
-                                              build_com_rpnl_r
+                                              build_com_rpnl_r,&
+                                              build_com_rpnl,&
+                                              build_com_rxrpnl
    USE cp_cfm_basic_linalg,             ONLY: cp_cfm_lu_decompose
    USE cp_cfm_types,                    ONLY: cp_cfm_create,&
                                               cp_cfm_get_info,&
@@ -1805,12 +1807,13 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'qs_com_rrpnl', routineP = moduleN//':'//routineN
 
-      CHARACTER(LEN=8), ALLOCATABLE, DIMENSION(:)        :: rlab
-      CHARACTER(LEN=default_string_length)               :: description, description_2
+      CHARACTER(LEN=8), ALLOCATABLE, DIMENSION(:)        :: rlab, rlab_3 !, rlab_2
+      CHARACTER(LEN=default_string_length)               :: description,  description_3 !, description_2
       INTEGER                                            :: handle, ind, ispin, ix, iy, iz, nm
       REAL(dp)                                           :: strace, trace, eps_ppnl
-      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: exp_value, exp_value_2
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, com_rrpnl, rho_ao, rho_ao_im, com_rpnl_r
+      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: exp_value, exp_value_2, exp_value_3
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, com_rrpnl, rho_ao, rho_ao_im, com_rxrpnl!,&  
+                                                            ! com_rpnl_r
       TYPE(dbcsr_type), POINTER                          :: mat_tmp_ao
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(qs_rho_type), POINTER                         :: rho
@@ -1826,8 +1829,11 @@ CONTAINS
 
       ALLOCATE (exp_value(nm))
       ALLOCATE (exp_value_2(9))
+      ALLOCATE (exp_value_3(3))
       ALLOCATE (rlab(nm+1))
       exp_value = 0.0_dp
+      exp_value_2 = 0.0_dp
+      exp_value_3 = 0.0_dp
       rlab = ""
 
       ! get labels
@@ -1838,13 +1844,36 @@ CONTAINS
          CALL set_label(rlab(ind), ix, iy, iz)
       ENDDO
 
+      ALLOCATE (rlab_3(4))
+      rlab_3 = ""
+
+      ! get labels
+      DO ind = 1, 3
+         ix = indco(1, ind+1)
+         iy = indco(2, ind+1)
+         iz = indco(3, ind+1)
+         CALL set_label(rlab_3(ind+1), ix, iy, iz)
+      ENDDO
+
+      ! ALLOCATE (rlab_2(10))
+      ! rlab_2 = ""
+
+      ! ! get labels
+      ! DO ind = 1, 9
+      !    ix = indco(1, ind+4)
+      !    iy = indco(2, ind+4)
+      !    iz = indco(3, ind+4)
+      !    CALL set_label(rlab_2(ind+1), ix, iy, iz)
+      ! ENDDO
+
+
       ! Allocate dbcsr momentum matrix in ao basis
-      NULLIFY (com_rrpnl, matrix_s, com_rpnl_r)
+      NULLIFY (com_rrpnl, matrix_s)! , com_rpnl_r)
       CALL dbcsr_allocate_matrix_set(com_rrpnl, nm)
       CALL initialize_dbcsr_operator_matrix(qs_env, com_rrpnl, dbcsr_type_no_symmetry)
 
-      CALL dbcsr_allocate_matrix_set(com_rpnl_r, 9)
-      CALL initialize_dbcsr_operator_matrix(qs_env, com_rpnl_r, dbcsr_type_no_symmetry)      
+      ! CALL dbcsr_allocate_matrix_set(com_rpnl_r, 9)
+      ! CALL initialize_dbcsr_operator_matrix(qs_env, com_rpnl_r, dbcsr_type_no_symmetry)      
 
       NULLIFY (rho, dft_control, sab_all, sap_ppnl, qs_kind_set)
       CALL get_qs_env(qs_env=qs_env, &
@@ -1857,7 +1886,7 @@ CONTAINS
       ! Calculate linear momentum matrix in ao basis
       eps_ppnl = dft_control%qs_control%eps_ppnl
       CALL build_com_rrpnl(com_rrpnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl)
-      CALL build_com_rpnl_r(com_rpnl_r, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, .TRUE.)
+      ! CALL build_com_rpnl_r(com_rpnl_r, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, .TRUE.)
 
 
       NULLIFY (rho, dft_control)
@@ -1888,35 +1917,35 @@ CONTAINS
          exp_value(ind) = strace
       END DO
 
-      ! Calculate expectation value over real part
-      DO ind = 1, SIZE(com_rpnl_r)
-         strace = 0._dp
-         DO ispin = 1, dft_control%nspins
-            CALL dbcsr_set(mat_tmp_ao, 0.0_dp)
-            CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao(ispin)%matrix, com_rpnl_r(ind)%matrix, &
-                                0.0_dp, mat_tmp_ao)
-            CALL dbcsr_trace(mat_tmp_ao, trace)
-            strace = strace+trace
-         END DO
-         exp_value_2(ind) = -strace
-      END DO
+      ! ! Calculate expectation value over real part
+      ! DO ind = 1, SIZE(com_rpnl_r)
+      !    strace = 0._dp
+      !    DO ispin = 1, dft_control%nspins
+      !       CALL dbcsr_set(mat_tmp_ao, 0.0_dp)
+      !       CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao(ispin)%matrix, com_rpnl_r(ind)%matrix, &
+      !                           0.0_dp, mat_tmp_ao)
+      !       CALL dbcsr_trace(mat_tmp_ao, trace)
+      !       strace = strace+trace
+      !    END DO
+      !    exp_value_2(ind) = -strace
+      ! END DO
 
-      CALL build_com_rpnl_r(com_rpnl_r, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, .FALSE.)
+      ! CALL build_com_rpnl_r(com_rpnl_r, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, .FALSE.)
 
-      ! Calculate expectation value over real part
-      DO ind = 1, SIZE(com_rpnl_r)
-         strace = 0._dp
-         DO ispin = 1, dft_control%nspins
-            CALL dbcsr_set(mat_tmp_ao, 0.0_dp)
-            CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao(ispin)%matrix, com_rpnl_r(ind)%matrix, &
-                                0.0_dp, mat_tmp_ao)
-            CALL dbcsr_trace(mat_tmp_ao, trace)
-            strace = strace+trace
-         END DO
-         exp_value_2(ind) = exp_value_2(ind) + strace
-      END DO
+      ! ! Calculate expectation value over real part
+      ! DO ind = 1, SIZE(com_rpnl_r)
+      !    strace = 0._dp
+      !    DO ispin = 1, dft_control%nspins
+      !       CALL dbcsr_set(mat_tmp_ao, 0.0_dp)
+      !       CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao(ispin)%matrix, com_rpnl_r(ind)%matrix, &
+      !                           0.0_dp, mat_tmp_ao)
+      !       CALL dbcsr_trace(mat_tmp_ao, trace)
+      !       strace = strace+trace
+      !    END DO
+      !    exp_value_2(ind) = exp_value_2(ind) + strace
+      ! END DO
 
-      ! imaginary part of the density for RTP
+      ! ! imaginary part of the density for RTP
       IF (qs_env%run_rtp) THEN
          NULLIFY (rho_ao_im)
          CALL qs_rho_get(rho, rho_ao_im=rho_ao_im)
@@ -1935,14 +1964,56 @@ CONTAINS
       ENDIF
 
       CALL dbcsr_deallocate_matrix_set(com_rrpnl)
-      CALL dbcsr_deallocate_matrix_set(com_rpnl_r)
+      ! CALL dbcsr_deallocate_matrix_set(com_rpnl_r)
+
+      NULLIFY(com_rxrpnl)
+      CALL dbcsr_allocate_matrix_set(com_rxrpnl, 3)
+      CALL initialize_dbcsr_operator_matrix(qs_env, com_rxrpnl, dbcsr_type_no_symmetry)
+      CALL build_com_rxrpnl(com_rxrpnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl)
+
+      ! Calculate expectation value over real part
+      DO ind = 1, SIZE(com_rxrpnl)
+         strace = 0._dp
+         DO ispin = 1, dft_control%nspins
+            CALL dbcsr_set(mat_tmp_ao, 0.0_dp)
+            CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao(ispin)%matrix, com_rxrpnl(ind)%matrix, &
+                                0.0_dp, mat_tmp_ao)
+            CALL dbcsr_trace(mat_tmp_ao, trace)
+            strace = strace+trace
+         END DO
+         exp_value_3(ind) = - strace
+      END DO
+
+      ! imaginary part of the density for RTP
+      IF (qs_env%run_rtp) THEN
+         NULLIFY (rho_ao_im)
+         CALL qs_rho_get(rho, rho_ao_im=rho_ao_im)
+         ! Calculate expectation value over imaginary part
+         DO ind = 1, SIZE(com_rxrpnl)
+            strace = 0._dp
+            DO ispin = 1, dft_control%nspins
+               CALL dbcsr_set(mat_tmp_ao, 0.0_dp)
+               CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao_im(ispin)%matrix, com_rxrpnl(ind)%matrix, &
+                                   0.0_dp, mat_tmp_ao)
+               CALL dbcsr_trace(mat_tmp_ao, trace)
+               strace = strace+trace
+            END DO
+            exp_value_3(ind) = exp_value_3(ind)-strace
+         END DO
+      ENDIF
+
+
+
       CALL dbcsr_deallocate_matrix(mat_tmp_ao)
 
       description = "Expectation value of [[r,V_nl],r] [a.u.]"
       CALL print_second_moments(unit_number, exp_value, rlab, description)
 
-      description_2 = "Expectation value of [[r,V_nl],r] [a.u.] (2)"
-      CALL print_second_moments(unit_number, exp_value_2, rlab, description_2)
+      ! description_2 = "Expectation value of [[r,V_nl],r] [a.u.] (2)"
+      ! CALL print_second_moments(unit_number, exp_value_2, rlab_2, description_2)
+
+      description_3 = "Expectation value of r x [r,V_nl] [a.u.]"
+      CALL print_first_moments(unit_number, exp_value_3, rlab_3, description_3)
 
       DEALLOCATE (exp_value)
       DEALLOCATE (rlab)
