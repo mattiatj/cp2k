@@ -16,6 +16,8 @@ MODULE commutator_rpnl
                                               gto_basis_set_type
    USE dbcsr_api,                       ONLY: dbcsr_get_block_p,&
                                               dbcsr_p_type
+   USE cell_types,                      ONLY: cell_type,&
+                                              pbc
    USE external_potential_types,        ONLY: gth_potential_p_type,&
                                               gth_potential_type,&
                                               sgp_potential_p_type,&
@@ -24,6 +26,9 @@ MODULE commutator_rpnl
    USE orbital_pointers,                ONLY: init_orbital_pointers,&
                                               nco,&
                                               ncoset
+   USE particle_types,                  ONLY: particle_type
+   USE qs_environment_types,            ONLY: get_qs_env,&
+                                              qs_environment_type
    USE qs_kind_types,                   ONLY: get_qs_kind,&
                                               get_qs_kind_set,&
                                               qs_kind_type
@@ -66,13 +71,15 @@ CONTAINS
 !> \param sap_ppnl ...
 !> \param eps_ppnl ...
 ! **************************************************************************************************
-   SUBROUTINE build_com_rpnl(matrix_rv, qs_kind_set, sab_orb, sap_ppnl, eps_ppnl)
+   SUBROUTINE build_com_rpnl(matrix_rv, qs_kind_set, sab_orb, sap_ppnl, eps_ppnl, qs_env, ref_point)
 
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_rv
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: sab_orb, sap_ppnl
       REAL(KIND=dp), INTENT(IN)                          :: eps_ppnl
+      TYPE(qs_environment_type), POINTER, OPTIONAL       :: qs_env
+      REAL(KIND=dp), DIMENSION(:), INTENT(IN), OPTIONAL  :: ref_point
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'build_com_rpnl', routineP = moduleN//':'//routineN
 
@@ -88,7 +95,7 @@ CONTAINS
       REAL(KIND=dp)                                      :: dac, ppnl_radius
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: ai_work, sab, work
       REAL(KIND=dp), DIMENSION(1)                        :: rprjc, zetc
-      REAL(KIND=dp), DIMENSION(3)                        :: rab, rac
+      REAL(KIND=dp), DIMENSION(3)                        :: rab, rac, rf, ra, rc, raf, rcf
       REAL(KIND=dp), DIMENSION(:), POINTER               :: alpha_ppnl, set_radius_a
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: cprj, rpgfa, sphi_a, vprj_ppnl, x_block, &
                                                             y_block, z_block, zeta
@@ -104,7 +111,8 @@ CONTAINS
       TYPE(sap_int_type), DIMENSION(:), POINTER          :: sap_int
       TYPE(sgp_potential_p_type), DIMENSION(:), POINTER  :: spotential
       TYPE(sgp_potential_type), POINTER                  :: sgp_potential
-
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       CALL timeset(routineN, handle)
 
       ppnl_present = ASSOCIATED(sap_ppnl)
@@ -156,6 +164,20 @@ CONTAINS
             END IF
          END DO
 
+         IF (PRESENT(ref_point)) THEN
+            rf(:) = ref_point(:)
+         ELSE
+            rf(:) = 0._dp
+         END IF
+
+         IF (PRESENT(ref_point)) THEN
+            CPASSERT(PRESENT(qs_env))
+            NULLIFY (cell, particle_set)
+            CALL get_qs_env(qs_env,&
+                            particle_set = particle_set,&
+                            cell = cell)
+         ENDIF
+
          maxder = 4
          nthread = 1
 !$       nthread = omp_get_max_threads()
@@ -165,12 +187,12 @@ CONTAINS
 !$OMP PARALLEL &
 !$OMP DEFAULT (NONE) &
 !$OMP SHARED  (nl_iterator, basis_set, spotential, gpotential, maxder, ncoset, &
-!$OMP          sap_int, nkind, ldsab,  ldai, nco ) &
+!$OMP          sap_int, nkind, ldsab,  ldai, nco, rf, cell, particle_set, ref_point) &
 !$OMP PRIVATE (mepos, ikind, kkind, iatom, katom, nlist, ilist, nneighbor, jneighbor, &
 !$OMP          cell_c, rac, iac, first_sgfa, la_max, la_min, npgfa, nseta, nsgfa, nsgf_seta, &
 !$OMP          sphi_a, zeta, cprj, lppnl, nppnl, nprj_ppnl, &
 !$OMP          clist, iset, ncoa, sgfa, prjc, work, sab, ai_work, nprjc,  ppnl_radius, &
-!$OMP          ncoc, rpgfa, vprj_ppnl, i, l, gpot, spot, &
+!$OMP          ncoc, rpgfa, vprj_ppnl, i, l, gpot, spot, raf, rcf, ra, rc, &
 !$OMP          set_radius_a, rprjc, dac, lc_max, lc_min, zetc, alpha_ppnl)
          mepos = 0
 !$       mepos = omp_get_thread_num()
@@ -246,6 +268,14 @@ CONTAINS
             clist%achint = 0._dp
             clist%nsgf_cnt = 0
             NULLIFY (clist%sgf_list)
+
+            IF (PRESENT(ref_point)) THEN
+              ra(:) = pbc(particle_set(iatom)%r(:)-rf, cell)+rf
+              rc(:) = pbc(particle_set(katom)%r(:)-rf, cell)+rf
+              raf(:) = ra(:)-rf(:)
+              rcf(:) = rc(:)-rf(:)
+            ENDIF
+
             DO iset = 1, nseta
                ncoa = npgfa(iset)*ncoset(la_max(iset))
                sgfa = first_sgfa(1, iset)
@@ -263,8 +293,13 @@ CONTAINS
                   ! Calculate the primitive overlap and dipole moment integrals
                   CALL overlap(la_max(iset), la_min(iset), npgfa(iset), rpgfa(:, iset), zeta(:, iset), &
                                lc_max, lc_min, 1, rprjc, zetc, rac, dac, sab(:, :, 1), 0, .FALSE., ai_work, ldai)
-                  CALL moment(la_max(iset), npgfa(iset), zeta(:, iset), rpgfa(:, iset), la_min(iset), &
-                              lc_max, 1, zetc, rprjc, 1, -rac, (/0._dp, 0._dp, 0._dp/), sab(:, :, 2:4))
+                  IF (.NOT. PRESENT(ref_point)) THEN
+                    CALL moment(la_max(iset), npgfa(iset), zeta(:, iset), rpgfa(:, iset), la_min(iset), &
+                                lc_max, 1, zetc, rprjc, 1, -rac, (/0._dp, 0._dp, 0._dp/), sab(:, :, 2:4))
+                  ELSE
+                    CALL moment(la_max(iset), npgfa(iset), zeta(:, iset), rpgfa(:, iset), la_min(iset), &
+                                lc_max, 1, zetc, rprjc, 1, raf, rcf, sab(:, :, 2:4))
+                  ENDIF
                   ! *** Transformation step projector functions (cartesian->spherical) ***
                   DO i = 1, maxder
                      CALL dgemm("N", "N", ncoa, nprjc, ncoc, 1.0_dp, sab(1, 1, i), ldsab, &
@@ -410,13 +445,15 @@ CONTAINS
 !> \param sap_ppnl ...
 !> \param eps_ppnl ...
 ! **************************************************************************************************
-   SUBROUTINE build_com_rrpnl(matrix_rv, qs_kind_set, sab_orb, sap_ppnl, eps_ppnl)
+   SUBROUTINE build_com_rrpnl(matrix_rv, qs_kind_set, sab_orb, sap_ppnl, eps_ppnl, qs_env, ref_point)
 
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_rv
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: sab_orb, sap_ppnl
       REAL(KIND=dp), INTENT(IN)                          :: eps_ppnl
+      TYPE(qs_environment_type), POINTER, OPTIONAL       :: qs_env
+      REAL(KIND=dp), DIMENSION(:), INTENT(IN), OPTIONAL  :: ref_point
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'build_com_rrpnl', &
          routineP = moduleN//':'//routineN
@@ -433,7 +470,7 @@ CONTAINS
       REAL(KIND=dp)                                      :: dac, ppnl_radius
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: ai_work, sab, work
       REAL(KIND=dp), DIMENSION(1)                        :: rprjc, zetc
-      REAL(KIND=dp), DIMENSION(3)                        :: rab, rac
+      REAL(KIND=dp), DIMENSION(3)                        :: rab, rac, rf, ra, rc, raf, rcf
       REAL(KIND=dp), DIMENSION(:), POINTER               :: alpha_ppnl, set_radius_a
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: cprj, rpgfa, sphi_a, vprj_ppnl, zeta
       REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: achint, acint, bchint, bcint
@@ -449,7 +486,8 @@ CONTAINS
       TYPE(sap_int_type), DIMENSION(:), POINTER          :: sap_int
       TYPE(sgp_potential_p_type), DIMENSION(:), POINTER  :: spotential
       TYPE(sgp_potential_type), POINTER                  :: sgp_potential
-
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
 !, &
 ! x_block, y_block, z_block
 
@@ -504,6 +542,20 @@ CONTAINS
             END IF
          END DO
 
+         IF (PRESENT(ref_point)) THEN
+            rf(:) = ref_point(:)
+         ELSE
+            rf(:) = 0._dp
+         END IF
+
+         IF (PRESENT(ref_point)) THEN
+            CPASSERT(PRESENT(qs_env))
+            NULLIFY (cell, particle_set)
+            CALL get_qs_env(qs_env,&
+                            particle_set = particle_set,&
+                            cell = cell)
+         ENDIF
+
          maxder = 10
          nthread = 1
 !$       nthread = omp_get_max_threads()
@@ -513,12 +565,12 @@ CONTAINS
 !$OMP PARALLEL &
 !$OMP DEFAULT (NONE) &
 !$OMP SHARED  (nl_iterator, basis_set, spotential, gpotential, maxder, ncoset, &
-!$OMP          sap_int, nkind, ldsab,  ldai, nco ) &
+!$OMP          sap_int, nkind, ldsab,  ldai, nco, rf, cell, particle_set, ref_point) &
 !$OMP PRIVATE (mepos, ikind, kkind, iatom, katom, nlist, ilist, nneighbor, jneighbor, &
 !$OMP          cell_c, rac, iac, first_sgfa, la_max, la_min, npgfa, nseta, nsgfa, nsgf_seta, &
 !$OMP          sphi_a, zeta, cprj, lppnl, nppnl, nprj_ppnl, &
 !$OMP          clist, iset, ncoa, sgfa, prjc, work, sab, ai_work, nprjc,  ppnl_radius, &
-!$OMP          ncoc, rpgfa, vprj_ppnl, i, l, gpot, spot, &
+!$OMP          ncoc, rpgfa, vprj_ppnl, i, l, gpot, spot, raf, rcf, ra, rc, &
 !$OMP          set_radius_a, rprjc, dac, lc_max, lc_min, zetc, alpha_ppnl, ind)
          mepos = 0
 !$       mepos = omp_get_thread_num()
@@ -594,6 +646,14 @@ CONTAINS
             clist%achint = 0._dp
             clist%nsgf_cnt = 0
             NULLIFY (clist%sgf_list)
+
+            IF (PRESENT(ref_point)) THEN
+              ra(:) = pbc(particle_set(iatom)%r(:)-rf, cell)+rf
+              rc(:) = pbc(particle_set(katom)%r(:)-rf, cell)+rf
+              raf(:) = ra(:)-rf(:)
+              rcf(:) = rc(:)-rf(:)
+            ENDIF
+
             DO iset = 1, nseta
                ncoa = npgfa(iset)*ncoset(la_max(iset))
                sgfa = first_sgfa(1, iset)
@@ -611,8 +671,13 @@ CONTAINS
                   ! Calculate the primitive overlap and dipole moment integrals
                   CALL overlap(la_max(iset), la_min(iset), npgfa(iset), rpgfa(:, iset), zeta(:, iset), &
                                lc_max, lc_min, 1, rprjc, zetc, rac, dac, sab(:, :, 1), 0, .FALSE., ai_work, ldai)
-                  CALL moment(la_max(iset), npgfa(iset), zeta(:, iset), rpgfa(:, iset), la_min(iset), &
-                              lc_max, 1, zetc, rprjc, 2, -rac, (/0._dp, 0._dp, 0._dp/), sab(:, :, 2:maxder))
+                  IF (.NOT. PRESENT(ref_point)) THEN
+                    CALL moment(la_max(iset), npgfa(iset), zeta(:, iset), rpgfa(:, iset), la_min(iset), &
+                                lc_max, 1, zetc, rprjc, 2, -rac, (/0._dp, 0._dp, 0._dp/), sab(:, :, 2:maxder))
+                  ELSE
+                    CALL moment(la_max(iset), npgfa(iset), zeta(:, iset), rpgfa(:, iset), la_min(iset), &
+                                lc_max, 1, zetc, rprjc, 2, raf, rcf, sab(:, :, 2:maxder))
+                  ENDIF
                   ! *** Transformation step projector functions (cartesian->spherical) ***
                   DO i = 1, maxder
                      CALL dgemm("N", "N", ncoa, nprjc, ncoc, 1.0_dp, sab(1, 1, i), ldsab, &
@@ -818,13 +883,16 @@ CONTAINS
 !> \param sap_ppnl ...
 !> \param eps_ppnl ...
 ! **************************************************************************************************
-   SUBROUTINE build_com_rxrpnl(matrix_rv, qs_kind_set, sab_orb, sap_ppnl, eps_ppnl)
+   SUBROUTINE build_com_rxrpnl(qs_env, matrix_rv, qs_kind_set, sab_orb, sap_ppnl, eps_ppnl, ref_point)
 
+      TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_rv
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: sab_orb, sap_ppnl
       REAL(KIND=dp), INTENT(IN)                          :: eps_ppnl
+      REAL(KIND=dp), DIMENSION(3), INTENT(IN), OPTIONAL  :: ref_point
+
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'build_com_rxrpnl', &
          routineP = moduleN//':'//routineN
@@ -838,10 +906,10 @@ CONTAINS
                                                             nsgf_seta
       INTEGER, DIMENSION(:, :), POINTER                  :: first_sgfa
       LOGICAL                                            :: found, gpot, ppnl_present, spot
-      REAL(KIND=dp)                                      :: dac, ppnl_radius
+      REAL(KIND=dp)                                      :: dac, ppnl_radius!, rac2
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: ai_work, sab, work
       REAL(KIND=dp), DIMENSION(1)                        :: rprjc, zetc
-      REAL(KIND=dp), DIMENSION(3)                        :: rab, rac
+      REAL(KIND=dp), DIMENSION(3)                        :: rab, rac, rc, ra, rf, rcf, raf!, rac_new
       REAL(KIND=dp), DIMENSION(:), POINTER               :: alpha_ppnl, set_radius_a
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: cprj, rpgfa, sphi_a, vprj_ppnl, zeta
       REAL(KIND=dp), DIMENSION(:, :, :), POINTER         :: achint, acint, bchint, bcint
@@ -857,6 +925,8 @@ CONTAINS
       TYPE(sap_int_type), DIMENSION(:), POINTER          :: sap_int
       TYPE(sgp_potential_p_type), DIMENSION(:), POINTER  :: spotential
       TYPE(sgp_potential_type), POINTER                  :: sgp_potential
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
 
 !, &
 ! x_block, y_block, z_block
@@ -912,6 +982,18 @@ CONTAINS
             END IF
          END DO
 
+         IF (PRESENT(ref_point)) THEN
+            rf(:) = ref_point(:)
+         ELSE
+            rf(:) = 0._dp
+         END IF
+
+         NULLIFY (cell, particle_set)
+
+         CALL get_qs_env(qs_env,&
+                         particle_set = particle_set,&
+                         cell = cell)
+
          maxder = 10
          nthread = 1
 !$       nthread = omp_get_max_threads()
@@ -921,12 +1003,12 @@ CONTAINS
 !$OMP PARALLEL &
 !$OMP DEFAULT (NONE) &
 !$OMP SHARED  (nl_iterator, basis_set, spotential, gpotential, maxder, ncoset, &
-!$OMP          sap_int, nkind, ldsab,  ldai, nco ) &
+!$OMP          sap_int, nkind, ldsab,  ldai, nco, rf, cell, particle_set, ref_point) &
 !$OMP PRIVATE (mepos, ikind, kkind, iatom, katom, nlist, ilist, nneighbor, jneighbor, &
 !$OMP          cell_c, rac, iac, first_sgfa, la_max, la_min, npgfa, nseta, nsgfa, nsgf_seta, &
 !$OMP          sphi_a, zeta, cprj, lppnl, nppnl, nprj_ppnl, &
 !$OMP          clist, iset, ncoa, sgfa, prjc, work, sab, ai_work, nprjc,  ppnl_radius, &
-!$OMP          ncoc, rpgfa, vprj_ppnl, i, l, gpot, spot, &
+!$OMP          ncoc, rpgfa, vprj_ppnl, i, l, gpot, spot, ra, rc, raf, rcf, &
 !$OMP          set_radius_a, rprjc, dac, lc_max, lc_min, zetc, alpha_ppnl, ind)
          mepos = 0
 !$       mepos = omp_get_thread_num()
@@ -1002,6 +1084,19 @@ CONTAINS
             clist%achint = 0._dp
             clist%nsgf_cnt = 0
             NULLIFY (clist%sgf_list)
+
+
+            ! using PBC here might screw a molecule that fits the box (but e.g. hasn't been shifted by center_molecule)
+            ! by folding around the center, such screwing can be avoided for a proper choice of center.
+            ra(:) = pbc(particle_set(iatom)%r(:)-rf, cell)+rf
+            rc(:) = pbc(particle_set(katom)%r(:)-rf, cell)+rf
+            ! we dont use PBC at this point
+            ! rac_new(:) = ra(:)-rc(:)
+            raf(:) = ra(:)-rf(:)
+            rcf(:) = rc(:)-rf(:)
+            ! rac2 = rac_new(1)*rac_new(1)+raf(2)*raf(2)+rcf(3)*rcf(3)
+            ! dab = SQRT(rab2)
+
             DO iset = 1, nseta
                ncoa = npgfa(iset)*ncoset(la_max(iset))
                sgfa = first_sgfa(1, iset)
@@ -1019,8 +1114,13 @@ CONTAINS
                   ! Calculate the primitive overlap and dipole moment integrals
                   CALL overlap(la_max(iset), la_min(iset), npgfa(iset), rpgfa(:, iset), zeta(:, iset), &
                                lc_max, lc_min, 1, rprjc, zetc, rac, dac, sab(:, :, 1), 0, .FALSE., ai_work, ldai)
-                  CALL moment(la_max(iset), npgfa(iset), zeta(:, iset), rpgfa(:, iset), la_min(iset), &
-                              lc_max, 1, zetc, rprjc, 2, -rac, (/0._dp, 0._dp, 0._dp/), sab(:, :, 2:maxder))
+                  IF (.NOT. PRESENT(ref_point)) THEN
+                    CALL moment(la_max(iset), npgfa(iset), zeta(:, iset), rpgfa(:, iset), la_min(iset), &
+                                lc_max, 1, zetc, rprjc, 2, -rac, (/0._dp, 0._dp, 0._dp/), sab(:, :, 2:maxder))
+                  ELSE
+                    CALL moment(la_max(iset), npgfa(iset), zeta(:, iset), rpgfa(:, iset), la_min(iset), &
+                                lc_max, 1, zetc, rprjc, 2, raf, rcf, sab(:, :, 2:maxder))
+                  ENDIF
                   ! *** Transformation step projector functions (cartesian->spherical) ***
                   DO i = 1, maxder
                      CALL dgemm("N", "N", ncoa, nprjc, ncoc, 1.0_dp, sab(1, 1, i), ldsab, &

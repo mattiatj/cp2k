@@ -1158,7 +1158,7 @@ CONTAINS
                CALL qs_moment_berry_phase(qs_env, magnetic, maxmom, reference, ref_point, unit_nr)
             ELSE
                CALL qs_moment_locop(qs_env, magnetic, ang_mom_com_nl, maxmom, reference, ref_point, unit_nr)
-               IF (rrpnl) CALL qs_com_rrpnl(qs_env, unit_nr)
+               IF (rrpnl) CALL qs_com_rrpnl(qs_env, unit_nr, ref_point)
             END IF
          END IF
 
@@ -1170,7 +1170,7 @@ CONTAINS
             ! IF (periodic) THEN
             !   CPWARN("Velocity representation not implemented for periodic calculations!")
             ! ELSE
-            CALL qs_moment_vel(qs_env, com_nonloc, unit_nr)
+            CALL qs_moment_vel(qs_env, com_nonloc, unit_nr, reference, ref_point)
             ! END IF
          END IF
 

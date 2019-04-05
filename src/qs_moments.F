@@ -1640,7 +1640,7 @@ CONTAINS
             NULLIFY (com_rxrpnl)
             CALL dbcsr_allocate_matrix_set(com_rxrpnl, nm)
             CALL initialize_dbcsr_operator_matrix(qs_env, com_rxrpnl, dbcsr_type_no_symmetry)
-            CALL build_com_rxrpnl(com_rxrpnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl)
+            CALL build_com_rxrpnl(qs_env, com_rxrpnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, rcc)
 
             DO i = 1, SIZE(com_rxrpnl)
                strace = 0._dp
@@ -1651,7 +1651,7 @@ CONTAINS
                   CALL dbcsr_trace(mat_tmp_ao, trace)
                   strace = strace+trace
                END DO
-               mmom_nonloc(i) = mmom(i)-strace
+               mmom_nonloc(i) = mmom(i)+strace
             END DO
 
             CALL dbcsr_deallocate_matrix_set(com_rxrpnl)
@@ -1691,10 +1691,13 @@ CONTAINS
 !> \param com_nonloc ...
 !> \param unit_number ...
 ! **************************************************************************************************
-   SUBROUTINE qs_moment_vel(qs_env, com_nonloc, unit_number)
+   SUBROUTINE qs_moment_vel(qs_env, com_nonloc, unit_number, reference, ref_point)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       LOGICAL, INTENT(IN)                                :: com_nonloc
       INTEGER, INTENT(IN)                                :: unit_number
+      INTEGER, INTENT(IN), OPTIONAL                      :: reference
+      REAL(KIND=dp), DIMENSION(:), INTENT(IN),&
+                                      OPTIONAL, POINTER  :: ref_point
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'qs_moment_vel', routineP = moduleN//':'//routineN
 
@@ -1702,6 +1705,7 @@ CONTAINS
       CHARACTER(LEN=default_string_length)               :: description, description_nonloc
       INTEGER                                            :: handle, ind, ispin, ix, iy, iz, nm
       REAL(dp)                                           :: eps_ppnl, strace, trace
+      REAL(dp), DIMENSION(3)                             :: rcc
       REAL(dp), ALLOCATABLE, DIMENSION(:)                :: momenta, momenta_nonloc
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, matrix_vr, momenta_ao, rho_ao, &
                                                             rho_ao_im
@@ -1716,6 +1720,8 @@ CONTAINS
       CALL timeset(routineN, handle)
 
       nm = 3
+      
+      CALL get_reference_point(rcc, qs_env=qs_env, reference=reference, ref_point=ref_point)
 
       ALLOCATE (momenta(nm))
       ALLOCATE (rlab(nm+1))
@@ -1784,7 +1790,11 @@ CONTAINS
             NULLIFY (matrix_vr)
             CALL dbcsr_allocate_matrix_set(matrix_vr, 3)
             CALL initialize_dbcsr_operator_matrix(qs_env, matrix_vr, dbcsr_type_no_symmetry)
-            CALL build_com_rpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl)
+            IF (.NOT. PRESENT(ref_point)) THEN
+              CALL build_com_rpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl)
+            ELSE
+              CALL build_com_rpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, qs_env, rcc)
+            ENDIF
          ENDIF
 
          ! Calculate expectation value over imaginary part
@@ -1840,9 +1850,11 @@ CONTAINS
 !> \param qs_env ...
 !> \param unit_number ...
 ! **************************************************************************************************
-   SUBROUTINE qs_com_rrpnl(qs_env, unit_number)
+   SUBROUTINE qs_com_rrpnl(qs_env, unit_number, ref_point)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       INTEGER, INTENT(IN)                                :: unit_number
+      REAL(KIND=dp), DIMENSION(:), INTENT(IN),&
+                                      OPTIONAL, POINTER  :: ref_point
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'qs_com_rrpnl', routineP = moduleN//':'//routineN
 
@@ -1926,7 +1938,7 @@ CONTAINS
 
       ! Calculate linear momentum matrix in ao basis
       eps_ppnl = dft_control%qs_control%eps_ppnl
-      CALL build_com_rrpnl(com_rrpnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl)
+      CALL build_com_rrpnl(com_rrpnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, qs_env, ref_point)
       ! CALL build_com_rpnl_r(com_rpnl_r, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, .TRUE.)
 
       NULLIFY (rho, dft_control)
