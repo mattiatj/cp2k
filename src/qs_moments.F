@@ -2149,9 +2149,9 @@ CONTAINS
                   (TRIM(rlab(i)), "=", rmom(i, 3)*debye, i=2, 4), "Total=", dd
             CASE (2)
                WRITE (unit_number, "(T3,A)") "Quadrupole moment [Debye*Angstrom]"
-               WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
+               WRITE (unit_number, "(T17,3(A,A,D22.14,9X))") &
                   (TRIM(rlab(i)), "=", rmom(i, 3)*debye/bohr, i=5, 7)
-               WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
+               WRITE (unit_number, "(T17,3(A,A,D22.14,9X))") &
                   (TRIM(rlab(i)), "=", rmom(i, 3)*debye/bohr, i=8, 10)
             CASE (3)
                WRITE (unit_number, "(T3,A)") "Octapole moment [Debye*Angstrom**2]"
@@ -2188,6 +2188,7 @@ CONTAINS
                dd = SQRT(SUM(mmom(1:3)**2))
                WRITE (unit_number, "(T3,A)") "Magnetic Dipole Moment (only orbital contrib.) [a.u.]"
                WRITE (unit_number, "(T5,3(A,A,F14.8,1X),T60,A,T67,F14.8)") &
+
                   (TRIM(rlab(i+1)), "=", mmom(i), i=1, 3), "Total=", dd
             END IF
          END IF
@@ -2215,7 +2216,7 @@ CONTAINS
       IF (unit_number > 0) THEN
          dd = SQRT(SUM(momenta(1:3)**2))
          WRITE (unit_number, "(T3,A)") description
-         WRITE (unit_number, "(T5,3(A,A,F14.8,1X),T60,A,T68,F14.8)") &
+         WRITE (unit_number, "(T5,3(A,A,D22.14,1X),T80,A,T86,D22.14)") &
             (TRIM(rlab(i+1)), "=", momenta(i), i=1, 3), "Total=", dd
       ENDIF
 
@@ -2238,12 +2239,12 @@ CONTAINS
 
       IF (unit_number > 0) THEN
          WRITE (unit_number, "(T3,A)") description
-         WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
+         WRITE (unit_number, "(T17,3(A,A,D22.14,9X))") &
             (TRIM(rlab(i)), "=", momenta(i), i=1, 3)
-         WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
+         WRITE (unit_number, "(T17,3(A,A,D22.14,9X))") &
             (TRIM(rlab(i)), "=", momenta(i), i=4, 6)
          IF (SIZE(momenta) == 9) THEN
-            WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
+            WRITE (unit_number, "(T17,3(A,A,D22.14,9X))") &
                (TRIM(rlab(i)), "=", momenta(i), i=7, 9)
          ENDIF
 
