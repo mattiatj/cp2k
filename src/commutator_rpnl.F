@@ -95,7 +95,7 @@ CONTAINS
       REAL(KIND=dp)                                      :: dac, ppnl_radius
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:, :, :)     :: ai_work, sab, work
       REAL(KIND=dp), DIMENSION(1)                        :: rprjc, zetc
-      REAL(KIND=dp), DIMENSION(3)                        :: rab, rac, rf, ra, rc, raf, rcf
+      REAL(KIND=dp), DIMENSION(3)                        :: rab, rac, rf, ra, rc !, raf, rcf
       REAL(KIND=dp), DIMENSION(:), POINTER               :: alpha_ppnl, set_radius_a
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: cprj, rpgfa, sphi_a, vprj_ppnl, x_block, &
                                                             y_block, z_block, zeta
@@ -170,13 +170,13 @@ CONTAINS
             rf(:) = 0._dp
          END IF
 
-         IF (PRESENT(ref_point)) THEN
-            CPASSERT(PRESENT(qs_env))
-            NULLIFY (cell, particle_set)
-            CALL get_qs_env(qs_env,&
-                            particle_set = particle_set,&
-                            cell = cell)
-         ENDIF
+         ! IF (PRESENT(ref_point)) THEN
+         CPASSERT(PRESENT(qs_env))
+         NULLIFY (cell, particle_set)
+         CALL get_qs_env(qs_env,&
+                         particle_set = particle_set,&
+                         cell = cell)
+         ! ENDIF
 
          maxder = 4
          nthread = 1
@@ -192,7 +192,7 @@ CONTAINS
 !$OMP          cell_c, rac, iac, first_sgfa, la_max, la_min, npgfa, nseta, nsgfa, nsgf_seta, &
 !$OMP          sphi_a, zeta, cprj, lppnl, nppnl, nprj_ppnl, &
 !$OMP          clist, iset, ncoa, sgfa, prjc, work, sab, ai_work, nprjc,  ppnl_radius, &
-!$OMP          ncoc, rpgfa, vprj_ppnl, i, l, gpot, spot, raf, rcf, ra, rc, &
+!$OMP          ncoc, rpgfa, vprj_ppnl, i, l, gpot, spot, ra, rc, &
 !$OMP          set_radius_a, rprjc, dac, lc_max, lc_min, zetc, alpha_ppnl)
          mepos = 0
 !$       mepos = omp_get_thread_num()
@@ -257,6 +257,12 @@ CONTAINS
                END DO
             END IF
 !$OMP END CRITICAL(sap_int_critical)
+
+            ! Take periodic boundary conditions into account
+            ra = particle_set(iatom)%r(:)
+            rc = particle_set(katom)%r(:)
+            rac = pbc(ra, rc, cell)
+
             dac = SQRT(SUM(rac*rac))
             clist => sap_int(iac)%alist(ilist)%clist(jneighbor)
             clist%catom = katom
@@ -269,12 +275,12 @@ CONTAINS
             clist%nsgf_cnt = 0
             NULLIFY (clist%sgf_list)
 
-            IF (PRESENT(ref_point)) THEN
-              ra(:) = pbc(particle_set(iatom)%r(:)-rf, cell)+rf
-              rc(:) = pbc(particle_set(katom)%r(:)-rf, cell)+rf
-              raf(:) = ra(:)-rf(:)
-              rcf(:) = rc(:)-rf(:)
-            ENDIF
+            ! IF (PRESENT(ref_point)) THEN
+            !   ra(:) = pbc(particle_set(iatom)%r(:)-rf, cell)+rf
+            !   rc(:) = pbc(particle_set(katom)%r(:)-rf, cell)+rf
+            !   raf(:) = ra(:)-rf(:)
+            !   rcf(:) = rc(:)-rf(:)
+            ! ENDIF
 
             DO iset = 1, nseta
                ncoa = npgfa(iset)*ncoset(la_max(iset))
@@ -293,13 +299,13 @@ CONTAINS
                   ! Calculate the primitive overlap and dipole moment integrals
                   CALL overlap(la_max(iset), la_min(iset), npgfa(iset), rpgfa(:, iset), zeta(:, iset), &
                                lc_max, lc_min, 1, rprjc, zetc, rac, dac, sab(:, :, 1), 0, .FALSE., ai_work, ldai)
-                  IF (.NOT. PRESENT(ref_point)) THEN
-                    CALL moment(la_max(iset), npgfa(iset), zeta(:, iset), rpgfa(:, iset), la_min(iset), &
-                                lc_max, 1, zetc, rprjc, 1, -rac, (/0._dp, 0._dp, 0._dp/), sab(:, :, 2:4))
-                  ELSE
-                    CALL moment(la_max(iset), npgfa(iset), zeta(:, iset), rpgfa(:, iset), la_min(iset), &
-                                lc_max, 1, zetc, rprjc, 1, raf, rcf, sab(:, :, 2:4))
-                  ENDIF
+                  ! IF (.NOT. PRESENT(ref_point)) THEN
+                  CALL moment(la_max(iset), npgfa(iset), zeta(:, iset), rpgfa(:, iset), la_min(iset), &
+                              lc_max, 1, zetc, rprjc, 1, -rac, (/0._dp, 0._dp, 0._dp/), sab(:, :, 2:4))
+                  ! ELSE
+                  !   CALL moment(la_max(iset), npgfa(iset), zeta(:, iset), rpgfa(:, iset), la_min(iset), &
+                  !               lc_max, 1, zetc, rprjc, 1, raf, rcf, sab(:, :, 2:4))
+                  ! ENDIF
                   ! *** Transformation step projector functions (cartesian->spherical) ***
                   DO i = 1, maxder
                      CALL dgemm("N", "N", ncoa, nprjc, ncoc, 1.0_dp, sab(1, 1, i), ldsab, &

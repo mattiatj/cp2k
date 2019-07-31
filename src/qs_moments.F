@@ -1662,7 +1662,7 @@ CONTAINS
             NULLIFY (com_rxrpnl)
             CALL dbcsr_allocate_matrix_set(com_rxrpnl, nm)
             CALL initialize_dbcsr_operator_matrix(qs_env, com_rxrpnl, dbcsr_type_no_symmetry)
-            CALL build_com_rxrpnl(qs_env, com_rxrpnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, rcc)
+            CALL build_com_rxrpnl(qs_env, com_rxrpnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl)
 
             DO i = 1, SIZE(com_rxrpnl)
                strace = 0._dp
@@ -1743,7 +1743,9 @@ CONTAINS
 
       nm = 3
       
-      CALL get_reference_point(rcc, qs_env=qs_env, reference=reference, ref_point=ref_point)
+      If (PRESENT(ref_point)) THEN
+        CALL get_reference_point(rcc, qs_env=qs_env, reference=reference, ref_point=ref_point)
+      ENDIF
 
       ALLOCATE (momenta(nm))
       ALLOCATE (rlab(nm+1))
@@ -1813,7 +1815,7 @@ CONTAINS
             CALL dbcsr_allocate_matrix_set(matrix_vr, 3)
             CALL initialize_dbcsr_operator_matrix(qs_env, matrix_vr, dbcsr_type_no_symmetry)
             IF (.NOT. PRESENT(ref_point)) THEN
-              CALL build_com_rpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl)
+              CALL build_com_rpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, qs_env)
             ELSE
               CALL build_com_rpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, qs_env, rcc)
             ENDIF

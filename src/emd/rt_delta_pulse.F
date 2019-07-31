@@ -165,7 +165,7 @@ CONTAINS
          NULLIFY (matrix_vr)
          CALL dbcsr_allocate_matrix_set(matrix_vr, 3)
          CALL initialize_dbcsr_operator_matrix(qs_env, matrix_vr, dbcsr_type_no_symmetry)
-         CALL build_com_rpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, qs_env, rcc)
+         CALL build_com_rpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, qs_env)
       ENDIF
 
       DO ispin = 1, SIZE(matrix_ks)
