@@ -52,9 +52,9 @@ MODULE qs_moments
    USE cp_result_types,                 ONLY: cp_result_type
    USE dbcsr_api,                       ONLY: &
         dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_desymmetrize, &
-        dbcsr_distribution_type, dbcsr_get_block_p, dbcsr_init_p, dbcsr_multiply, dbcsr_p_type, &
-        dbcsr_set, dbcsr_trace, dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, &
-        dbcsr_type_symmetric
+        dbcsr_distribution_type, dbcsr_dot, dbcsr_get_block_p, dbcsr_init_p, dbcsr_multiply,&
+        dbcsr_p_type, dbcsr_set, dbcsr_trace, dbcsr_type, dbcsr_type_antisymmetric,&
+        dbcsr_type_no_symmetry, dbcsr_type_symmetric
    USE distribution_1d_types,           ONLY: distribution_1d_type
    USE kinds,                           ONLY: default_string_length,&
                                               dp
@@ -1492,7 +1492,7 @@ CONTAINS
       TYPE(cp_para_env_type), POINTER                    :: para_env
       TYPE(cp_result_type), POINTER                      :: results
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: com_rxrpnl, magmom, matrix_s, moments, &
-                                                            rho_ao
+                                                            rho_ao!, rho_ao_im
       TYPE(dbcsr_type), POINTER                          :: mat_tmp_ao
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(distribution_1d_type), POINTER                :: local_particles
@@ -1562,6 +1562,28 @@ CONTAINS
          END DO
          rmom(i+1, 1) = strace
       END DO
+
+      ! ! include imaginary part of the density for RTP
+      ! IF (qs_env%run_rtp) THEN
+      !    NULLIFY (rho_ao_im)
+      !    CALL qs_rho_get(rho, rho_ao_im=rho_ao_im)
+      !    NULLIFY (mat_tmp_ao)
+      !    ALLOCATE (mat_tmp_ao)
+      !    CALL dbcsr_desymmetrize(matrix_s(1)%matrix, mat_tmp_ao)
+
+      !    DO i = 1, SIZE(moments)
+      !    strace = 0._dp
+      !    DO ispin = 1, dft_control%nspins
+      !      CALL dbcsr_set(mat_tmp_ao, 0.0_dp)
+      !      CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao_im(ispin)%matrix, moments(i)%matrix, &
+      !                           0.0_dp, mat_tmp_ao)
+      !      CALL dbcsr_trace(mat_tmp_ao, trace)
+      !      strace = strace+trace
+      !    END DO
+      !    rmom(i+1, 1) = rmom(i+1, 1) + strace
+      !   END DO
+      !   CALL dbcsr_deallocate_matrix(mat_tmp_ao)
+      ! ENDIF
 
       CALL dbcsr_deallocate_matrix_set(moments)
 
@@ -2149,9 +2171,9 @@ CONTAINS
                   (TRIM(rlab(i)), "=", rmom(i, 3)*debye, i=2, 4), "Total=", dd
             CASE (2)
                WRITE (unit_number, "(T3,A)") "Quadrupole moment [Debye*Angstrom]"
-               WRITE (unit_number, "(T17,3(A,A,D22.14,9X))") &
+               WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
                   (TRIM(rlab(i)), "=", rmom(i, 3)*debye/bohr, i=5, 7)
-               WRITE (unit_number, "(T17,3(A,A,D22.14,9X))") &
+               WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
                   (TRIM(rlab(i)), "=", rmom(i, 3)*debye/bohr, i=8, 10)
             CASE (3)
                WRITE (unit_number, "(T3,A)") "Octapole moment [Debye*Angstrom**2]"
@@ -2188,7 +2210,6 @@ CONTAINS
                dd = SQRT(SUM(mmom(1:3)**2))
                WRITE (unit_number, "(T3,A)") "Magnetic Dipole Moment (only orbital contrib.) [a.u.]"
                WRITE (unit_number, "(T5,3(A,A,F14.8,1X),T60,A,T67,F14.8)") &
-
                   (TRIM(rlab(i+1)), "=", mmom(i), i=1, 3), "Total=", dd
             END IF
          END IF
@@ -2216,7 +2237,7 @@ CONTAINS
       IF (unit_number > 0) THEN
          dd = SQRT(SUM(momenta(1:3)**2))
          WRITE (unit_number, "(T3,A)") description
-         WRITE (unit_number, "(T5,3(A,A,D22.14,1X),T80,A,T86,D22.14)") &
+         WRITE (unit_number, "(T5,3(A,A,F14.8,1X),T80,A,T86,F14.8)") &
             (TRIM(rlab(i+1)), "=", momenta(i), i=1, 3), "Total=", dd
       ENDIF
 
@@ -2239,12 +2260,12 @@ CONTAINS
 
       IF (unit_number > 0) THEN
          WRITE (unit_number, "(T3,A)") description
-         WRITE (unit_number, "(T17,3(A,A,D22.14,9X))") &
+         WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
             (TRIM(rlab(i)), "=", momenta(i), i=1, 3)
-         WRITE (unit_number, "(T17,3(A,A,D22.14,9X))") &
+         WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
             (TRIM(rlab(i)), "=", momenta(i), i=4, 6)
          IF (SIZE(momenta) == 9) THEN
-            WRITE (unit_number, "(T17,3(A,A,D22.14,9X))") &
+            WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
                (TRIM(rlab(i)), "=", momenta(i), i=7, 9)
          ENDIF
 
