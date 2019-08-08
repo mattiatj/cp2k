@@ -39,12 +39,22 @@ MODULE rt_propagation_types
                                               dbcsr_deallocate_matrix,&
                                               dbcsr_init_p,&
                                               dbcsr_p_type,&
-                                              dbcsr_type
+                                              dbcsr_type,&
+                                              dbcsr_type_antisymmetric,&
+                                              dbcsr_type_symmetric,&
+                                              dbcsr_type_no_symmetry,&
+                                              dbcsr_copy
    USE kinds,                           ONLY: dp
+   USE input_section_types,             ONLY: section_get_lval,&
+                                              section_vals_type,&
+                                              section_get_ival,&
+                                              section_vals_val_get
+   USE orbital_pointers,                ONLY: current_maxl
    USE qs_matrix_pools,                 ONLY: mpools_get,&
                                               qs_matrix_pools_type
    USE qs_mo_types,                     ONLY: get_mo_set,&
                                               mo_set_p_type
+
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -71,6 +81,17 @@ MODULE rt_propagation_types
       TYPE(cp_fm_p_type), POINTER, DIMENSION(:)     :: next
       TYPE(cp_fm_p_type), POINTER, DIMENSION(:)     :: admm
    END TYPE rtp_mos_type
+
+   ! if ions are fixed, these matrices do not change during the propagation and can be stored
+   TYPE rt_moments_type
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)   :: el_moments
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)   :: sinmat
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)   :: cosmat
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)   :: magdipole_moment
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)   :: momentum
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)   :: com_rVnl
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)   :: com_rxrVnl
+   END TYPE rt_moments_type
 
    TYPE rt_prop_type
       TYPE(dbcsr_p_type), POINTER, DIMENSION(:)  :: exp_H_old
@@ -111,18 +132,22 @@ MODULE rt_propagation_types
       REAL(KIND=dp)                               :: lanzcos_threshold
       INTEGER                                     :: newton_schulz_order
       LOGICAL                                     :: linear_scaling
+      TYPE(rt_moments_type), POINTER              :: rtm
    END TYPE rt_prop_type
 
 ! *** Public data types ***
 
-   PUBLIC :: rt_prop_type
+   PUBLIC :: rt_prop_type, rt_moments_type
 
 ! *** Public subroutines ***
 
    PUBLIC :: rt_prop_create, &
              get_rtp, &
              rt_prop_release, &
-             rtp_history_create
+             rtp_history_create, &
+             rt_moments_create,&
+             get_rtm,&
+             rt_moments_release
 CONTAINS
 
 ! **************************************************************************************************
@@ -284,6 +309,7 @@ CONTAINS
       rtp%iter = 0
       rtp%do_hfx = .FALSE.
       rtp%track_imag = .FALSE.
+      NULLIFY(rtp%rtm)
 
    END SUBROUTINE rt_prop_create
 
@@ -317,7 +343,7 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE get_rtp(rtp, exp_H_old, exp_H_new, H_last_iter, rho_old, rho_next, rho_new, mos, mos_new, mos_old, mos_next, &
                       S_inv, S_half, S_minus_half, B_mat, C_mat, propagator_matrix, mixing, mixing_factor, &
-                      S_der, dt, nsteps, SinvH, SinvB, admm_mos)
+                      S_der, dt, nsteps, SinvH, SinvB, admm_mos, rtm)
 
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
@@ -339,6 +365,7 @@ CONTAINS
          POINTER                                         :: SinvH, SinvB
       TYPE(cp_fm_p_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: admm_mos
+      TYPE(rt_moments_type), POINTER, OPTIONAL           :: rtm
 
       CHARACTER(len=*), PARAMETER :: routineN = 'get_rtp', routineP = moduleN//':'//routineN
 
@@ -370,6 +397,8 @@ CONTAINS
       IF (PRESENT(mixing)) mixing = rtp%mixing
       IF (PRESENT(mixing_factor)) mixing_factor = rtp%mixing_factor
       IF (PRESENT(nsteps)) nsteps = rtp%nsteps
+
+      IF (PRESENT(rtm)) rtm => rtp%rtm
 
    END SUBROUTINE get_rtp
 
@@ -424,6 +453,12 @@ CONTAINS
          CALL rtp_history_release(rtp)
       DEALLOCATE (rtp%orders)
       IF (.NOT. rtp%linear_scaling) CALL cp_fm_struct_release(rtp%ao_ao_fmstruct)
+
+      IF (ASSOCIATED(rtp%rtm)) THEN
+         CALL rt_moments_release(rtp%rtm)
+         DEALLOCATE(rtp%rtm)
+      ENDIF
+
    END SUBROUTINE rt_prop_release
 
 ! **************************************************************************************************
@@ -512,5 +547,161 @@ CONTAINS
       DEALLOCATE (rtp%history)
 
    END SUBROUTINE rtp_history_release
+
+
+! **************************************************************************************************
+!> \brief ...
+!> \param rtm ...
+! **************************************************************************************************
+   SUBROUTINE rt_moments_create(rtm, input, template)
+      TYPE(rt_moments_type), POINTER                     :: rtm
+      TYPE(section_vals_type), POINTER                   :: input
+      TYPE(dbcsr_type), POINTER                        :: template
+
+      CHARACTER(len=*), PARAMETER :: routineN = 'rt_moments_create', &
+         routineP = moduleN//':'//routineN
+
+      INTEGER                                            :: moments_max_order, nm, nmom, index
+      LOGICAL                                            :: calc_elmom, calc_elmom_berry, calc_magmom,&
+                                                            calc_momentum, calc_com_rVnl, calc_com_rxrVnl
+
+      calc_elmom = .TRUE.
+      moments_max_order = section_get_ival(section_vals=input, &
+                                   keyword_name="DFT%PRINT%MOMENTS%MAX_MOMENT")
+      calc_elmom_berry = section_get_lval(section_vals=input, &
+                                     keyword_name="DFT%PRINT%MOMENTS%PERIODIC")
+      calc_magmom = section_get_lval(section_vals=input, &
+                                     keyword_name="DFT%PRINT%MOMENTS%MAGNETIC")
+      calc_momentum = section_get_lval(section_vals=input, &
+                                    keyword_name="DFT%PRINT%MOMENTS%LIN_MOM")
+      calc_com_rVnl = section_get_lval(section_vals=input, &
+                                       keyword_name="DFT%PRINT%MOMENTS%COM_NONLOC")
+      calc_com_rxrVnl = section_get_lval(section_vals=input, &
+                                           keyword_name="DFT%PRINT%MOMENTS%ANG_MOM_COM_NL")
+      
+      nmom = MIN(moments_max_order, current_maxl)
+      nm = (6+11*nmom+6*nmom**2+nmom**3)/6-1
+
+      NULLIFY(rtm%el_moments)
+      NULLIFY (rtm%cosmat, rtm%sinmat)
+      NULLIFY(rtm%magdipole_moment)
+      NULLIFY(rtm%momentum)
+      NULLIFY(rtm%com_rVnl)
+      NULLIFY(rtm%com_rxrVnl)
+
+      IF (calc_elmom) THEN
+         CALL dbcsr_allocate_matrix_set(rtm%el_moments, nm)
+         DO index = 1, SIZE(rtm%el_moments)
+            CALL dbcsr_init_p(rtm%el_moments(index)%matrix)
+            CALL dbcsr_create(rtm%el_moments(index)%matrix, template = template,&
+                              matrix_type = dbcsr_type_symmetric)
+         ENDDO
+      ENDIF
+
+      IF (calc_elmom_berry) THEN
+         CALL dbcsr_allocate_matrix_set(rtm%sinmat, 3)
+         CALL dbcsr_allocate_matrix_set(rtm%cosmat, 3)
+         DO index = 1, SIZE(rtm%sinmat)
+            CALL dbcsr_init_p(rtm%sinmat(index)%matrix)
+            CALL dbcsr_init_p(rtm%cosmat(index)%matrix)
+            CALL dbcsr_create(rtm%sinmat(index)%matrix, template = template,&
+                              matrix_type = dbcsr_type_symmetric)
+            CALL dbcsr_create(rtm%cosmat(index)%matrix, template = template,&
+                              matrix_type = dbcsr_type_symmetric)
+         ENDDO
+      ENDIF
+
+      IF (calc_magmom) THEN
+         CALL dbcsr_allocate_matrix_set(rtm%magdipole_moment, 3)
+         DO index = 1, SIZE(rtm%magdipole_moment)
+            CALL dbcsr_init_p(rtm%magdipole_moment(index)%matrix)
+            CALL dbcsr_create(rtm%magdipole_moment(index)%matrix, template = template,&
+                              matrix_type = dbcsr_type_antisymmetric)
+         ENDDO
+      ENDIF
+
+      IF (calc_momentum) THEN
+         CALL dbcsr_allocate_matrix_set(rtm%momentum, 3)
+         DO index = 1, SIZE(rtm%momentum)
+            CALL dbcsr_init_p(rtm%momentum(index)%matrix)
+            CALL dbcsr_create(rtm%momentum(index)%matrix, template = template,&
+                              matrix_type = dbcsr_type_antisymmetric)
+         ENDDO
+      ENDIF
+
+      IF (calc_com_rVnl) THEN
+         CALL dbcsr_allocate_matrix_set(rtm%com_rVnl, 3)
+         DO index = 1, SIZE(rtm%com_rVnl)
+            CALL dbcsr_init_p(rtm%com_rVnl(index)%matrix)
+            CALL dbcsr_create(rtm%com_rVnl(index)%matrix, template = template,&
+                              matrix_type = dbcsr_type_no_symmetry)
+         ENDDO
+      ENDIF
+
+      IF (calc_com_rxrVnl) THEN
+         CALL dbcsr_allocate_matrix_set(rtm%com_rxrVnl, 3)
+         DO index = 1, SIZE(rtm%com_rxrVnl)
+            CALL dbcsr_init_p(rtm%com_rxrVnl(index)%matrix)
+            CALL dbcsr_create(rtm%com_rxrVnl(index)%matrix, template = template,&
+                              matrix_type = dbcsr_type_no_symmetry)
+         ENDDO
+      ENDIF
+
+   END SUBROUTINE rt_moments_create
+
+! **************************************************************************************************
+!> \brief ...
+!> \param rtm ...
+!> \param el_moments ...
+!> \param sinmat ...
+!> \param cosmat ...
+!> \param magdipole_moment ...
+!> \param momentum ...
+!> \param com_rVnl ...
+!> \param com_rxrVnl ...
+! **************************************************************************************************
+   SUBROUTINE get_rtm(rtm, el_moments, sinmat, cosmat, magdipole_moment, momentum, com_rVnl, com_rxrVnl)
+
+      TYPE(rt_moments_type), POINTER                      :: rtm
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:), OPTIONAL :: el_moments
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:), OPTIONAL :: sinmat
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:), OPTIONAL :: cosmat
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:), OPTIONAL :: magdipole_moment
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:), OPTIONAL :: momentum
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:), OPTIONAL :: com_rVnl
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:), OPTIONAL :: com_rxrVnl
+
+      CHARACTER(len=*), PARAMETER :: routineN = 'get_rtm', routineP = moduleN//':'//routineN
+
+      CPASSERT(ASSOCIATED(rtm))
+
+      IF (PRESENT(el_moments)) el_moments => rtm%el_moments
+      IF (PRESENT(sinmat)) sinmat => rtm%sinmat
+      IF (PRESENT(cosmat)) cosmat => rtm%cosmat
+      IF (PRESENT(magdipole_moment)) magdipole_moment => rtm%magdipole_moment
+      IF (PRESENT(momentum)) momentum => rtm%momentum
+      IF (PRESENT(com_rVnl)) com_rVnl => rtm%com_rVnl
+      IF (PRESENT(com_rxrVnl)) com_rxrVnl => rtm%com_rxrVnl
+
+   END SUBROUTINE get_rtm
+
+! **************************************************************************************************
+!> \brief ...
+!> \param rtm ...
+! **************************************************************************************************
+   SUBROUTINE rt_moments_release(rtm)
+      TYPE(rt_moments_type), INTENT(inout)               :: rtm
+
+      CHARACTER(len=*), PARAMETER :: routineN = 'rt_moments_release', routineP = moduleN//':'//routineN
+
+      IF (ASSOCIATED(rtm%el_moments)) CALL dbcsr_deallocate_matrix_set(rtm%el_moments)
+      IF (ASSOCIATED(rtm%sinmat)) CALL dbcsr_deallocate_matrix_set(rtm%sinmat)
+      IF (ASSOCIATED(rtm%cosmat)) CALL dbcsr_deallocate_matrix_set(rtm%cosmat)
+      IF (ASSOCIATED(rtm%magdipole_moment)) CALL dbcsr_deallocate_matrix_set(rtm%magdipole_moment)
+      IF (ASSOCIATED(rtm%momentum)) CALL dbcsr_deallocate_matrix_set(rtm%momentum)
+      IF (ASSOCIATED(rtm%com_rVnl)) CALL dbcsr_deallocate_matrix_set(rtm%com_rVnl)
+      IF (ASSOCIATED(rtm%com_rxrVnl)) CALL dbcsr_deallocate_matrix_set(rtm%com_rxrVnl)
+
+   END SUBROUTINE rt_moments_release
 
 END MODULE rt_propagation_types

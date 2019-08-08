@@ -67,7 +67,8 @@ MODULE rt_propagation
    USE rt_propagation_types,            ONLY: get_rtp,&
                                               rt_prop_create,&
                                               rt_prop_type,&
-                                              rtp_history_create
+                                              rtp_history_create, &
+                                              rt_moments_create
    USE rt_propagation_utils,            ONLY: calc_S_derivs,&
                                               calc_update_rho,&
                                               calc_update_rho_sparse,&
@@ -407,9 +408,10 @@ CONTAINS
       TYPE(cp_fm_type), POINTER                          :: mo_coeff, mo_coeff_aux_fit
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
       TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(section_vals_type), POINTER                   :: input
 
-      NULLIFY (matrix_s, dft_control)
-      CALL get_qs_env(qs_env, dft_control=dft_control)
+      NULLIFY (matrix_s, dft_control, input)
+      CALL get_qs_env(qs_env, dft_control=dft_control, input = input)
 
       SELECT CASE (rtp_control%initial_wfn)
       CASE (use_scf_wfn)
@@ -460,6 +462,14 @@ CONTAINS
 
          qs_env%run_rtp = .TRUE.
       END SELECT
+
+      IF (rtp_control%fixed_ions) THEN
+        NULLIFY(matrix_s)
+        CALL get_qs_env(qs_env, matrix_s=matrix_s)
+        NULLIFY(qs_env%rtp%rtm)
+        ALLOCATE(qs_env%rtp%rtm)
+        CALL rt_moments_create(qs_env%rtp%rtm, input, matrix_s(1)%matrix)
+      ENDIF
 
    END SUBROUTINE rt_initial_guess
 
