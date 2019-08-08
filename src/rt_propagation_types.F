@@ -35,6 +35,7 @@ MODULE rt_propagation_types
                                               cp_fm_release
    USE cp_fm_vect,                      ONLY: cp_fm_vect_dealloc
    USE cp_log_handling,                 ONLY: cp_to_string
+   USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
    USE dbcsr_api,                       ONLY: dbcsr_create,&
                                               dbcsr_deallocate_matrix,&
                                               dbcsr_init_p,&
@@ -43,7 +44,8 @@ MODULE rt_propagation_types
                                               dbcsr_type_antisymmetric,&
                                               dbcsr_type_symmetric,&
                                               dbcsr_type_no_symmetry,&
-                                              dbcsr_copy
+                                              dbcsr_copy,&
+                                              dbcsr_set
    USE kinds,                           ONLY: dp
    USE input_section_types,             ONLY: section_get_lval,&
                                               section_vals_type,&
@@ -54,6 +56,7 @@ MODULE rt_propagation_types
                                               qs_matrix_pools_type
    USE qs_mo_types,                     ONLY: get_mo_set,&
                                               mo_set_p_type
+   USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
 
 #include "./base/base_uses.f90"
 
@@ -552,11 +555,15 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief ...
 !> \param rtm ...
+!> \param imput ...
+!> \param template ...
 ! **************************************************************************************************
-   SUBROUTINE rt_moments_create(rtm, input, template)
+   SUBROUTINE rt_moments_create(rtm, input, template, sab_orb, sab_all)
       TYPE(rt_moments_type), POINTER                     :: rtm
       TYPE(section_vals_type), POINTER                   :: input
-      TYPE(dbcsr_type), POINTER                        :: template
+      TYPE(dbcsr_type), POINTER                          :: template
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_all, sab_orb
 
       CHARACTER(len=*), PARAMETER :: routineN = 'rt_moments_create', &
          routineP = moduleN//':'//routineN
@@ -593,8 +600,8 @@ CONTAINS
          CALL dbcsr_allocate_matrix_set(rtm%el_moments, nm)
          DO index = 1, SIZE(rtm%el_moments)
             CALL dbcsr_init_p(rtm%el_moments(index)%matrix)
-            CALL dbcsr_create(rtm%el_moments(index)%matrix, template = template,&
-                              matrix_type = dbcsr_type_symmetric)
+            CALL dbcsr_copy(rtm%el_moments(index)%matrix, template)
+            CALL dbcsr_set(rtm%el_moments(index)%matrix, 0.0_dp)
          ENDDO
       ENDIF
 
@@ -604,10 +611,10 @@ CONTAINS
          DO index = 1, SIZE(rtm%sinmat)
             CALL dbcsr_init_p(rtm%sinmat(index)%matrix)
             CALL dbcsr_init_p(rtm%cosmat(index)%matrix)
-            CALL dbcsr_create(rtm%sinmat(index)%matrix, template = template,&
-                              matrix_type = dbcsr_type_symmetric)
-            CALL dbcsr_create(rtm%cosmat(index)%matrix, template = template,&
-                              matrix_type = dbcsr_type_symmetric)
+            CALL dbcsr_copy(rtm%sinmat(index)%matrix, template)
+            CALL dbcsr_copy(rtm%cosmat(index)%matrix, template)
+            CALL dbcsr_set(rtm%sinmat(index)%matrix, 0.0_dp)
+            CALL dbcsr_set(rtm%cosmat(index)%matrix, 0.0_dp)
          ENDDO
       ENDIF
 
@@ -617,6 +624,7 @@ CONTAINS
             CALL dbcsr_init_p(rtm%magdipole_moment(index)%matrix)
             CALL dbcsr_create(rtm%magdipole_moment(index)%matrix, template = template,&
                               matrix_type = dbcsr_type_antisymmetric)
+            CALL cp_dbcsr_alloc_block_from_nbl(rtm%magdipole_moment(index)%matrix, sab_orb)
          ENDDO
       ENDIF
 
@@ -626,6 +634,7 @@ CONTAINS
             CALL dbcsr_init_p(rtm%momentum(index)%matrix)
             CALL dbcsr_create(rtm%momentum(index)%matrix, template = template,&
                               matrix_type = dbcsr_type_antisymmetric)
+            CALL cp_dbcsr_alloc_block_from_nbl(rtm%momentum(index)%matrix, sab_orb)
          ENDDO
       ENDIF
 
@@ -635,6 +644,7 @@ CONTAINS
             CALL dbcsr_init_p(rtm%com_rVnl(index)%matrix)
             CALL dbcsr_create(rtm%com_rVnl(index)%matrix, template = template,&
                               matrix_type = dbcsr_type_no_symmetry)
+            CALL cp_dbcsr_alloc_block_from_nbl(rtm%com_rVnl(index)%matrix, sab_all)
          ENDDO
       ENDIF
 
@@ -644,6 +654,7 @@ CONTAINS
             CALL dbcsr_init_p(rtm%com_rxrVnl(index)%matrix)
             CALL dbcsr_create(rtm%com_rxrVnl(index)%matrix, template = template,&
                               matrix_type = dbcsr_type_no_symmetry)
+            CALL cp_dbcsr_alloc_block_from_nbl(rtm%com_rxrVnl(index)%matrix, sab_all)
          ENDDO
       ENDIF
 

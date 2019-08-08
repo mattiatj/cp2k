@@ -94,7 +94,8 @@ MODULE qs_moments
                                               qs_rho_type
    USE rt_propagation_types,            ONLY: get_rtp,&
                                               rt_prop_type,&
-                                              rt_moments_type
+                                              rt_moments_type,&
+                                              get_rtm
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -108,6 +109,7 @@ MODULE qs_moments
    PUBLIC :: build_berry_kpoint_matrix
    PUBLIC :: qs_moment_berry_phase, qs_moment_locop, qs_moment_vel
    PUBLIC :: qs_com_rrpnl, initialize_dbcsr_operator_matrix
+   PUBLIC :: moment_matrices_ao_basis
 
 CONTAINS
 
@@ -2358,85 +2360,90 @@ CONTAINS
 !> \param rtm ...
 !> \param qs_env ...
 ! **************************************************************************************************
-   ! SUBROUTINE moments_ao_basis(rtm, qs_env)
-   !    TYPE(rt_moments_type), POINTER                     :: rtm
-   !    TYPE(qs_environment_type), POINTER                 :: qs_env
+   SUBROUTINE moment_matrices_ao_basis(rtm, qs_env)
+      TYPE(rt_moments_type), POINTER                     :: rtm
+      TYPE(qs_environment_type), POINTER                 :: qs_env
 
 
-   !    CHARACTER(LEN=*), PARAMETER :: routineN = 'moments_ao_basis', &
-   !       routineP = moduleN//':'//routineN
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'moment_matrices_ao_basis', &
+         routineP = moduleN//':'//routineN
 
-   !    INTEGER                                            :: handle, i, maxmom, nm, nmom, reference
-   !    REAL(dp)                                           :: eps_ppnl
-   !    REAL(dp), DIMENSION(3)                             :: kvec, rcc
-   !    REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
-   !    TYPE(cell_type), POINTER                           :: cell
-   !    TYPE(dft_control_type), POINTER                    :: dft_control
-   !    TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-   !       POINTER                                         :: sab_all, sap_ppnl
-   !    TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
-   !    TYPE(section_vals_type), POINTER                   :: input
+      INTEGER                                            :: handle, maxmom, nm, nmom, reference,i
+      REAL(dp)                                           :: eps_ppnl
+      REAL(dp), DIMENSION(3)                             :: rcc,kvec
+      REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_all, sap_ppnl
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
+      TYPE(section_vals_type), POINTER                   :: input
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)          :: calculate
 
-   !    CALL timeset(routineN, handle)
+      CALL timeset(routineN, handle)
 
-   !    NULLIFY(input, cell)
+      NULLIFY(input, cell)
 
-   !    CALL get_qs_env(qs_env,&
-   !                    cell = cell,&
-   !                    dft_control = dft_control,&
-   !                    input = input)
-   !    ! reference point
-   !    reference = section_get_ival(section_vals=input, &
-   !                                    keyword_name="DFT%PRINT%MOMENTS%REFERENCE")
-   !    NULLIFY (ref_point)
-   !    CALL section_vals_val_get(input, "DFT%PRINT%MOMENTS%REF_POINT", r_vals=ref_point)
+      CALL get_qs_env(qs_env,&
+                      cell = cell,&
+                      dft_control = dft_control,&
+                      input = input)
+      ! reference point
+      reference = section_get_ival(section_vals=input, &
+                                      keyword_name="DFT%PRINT%MOMENTS%REFERENCE")
+      NULLIFY (ref_point)
+      CALL section_vals_val_get(input, "DFT%PRINT%MOMENTS%REF_POINT", r_vals=ref_point)
 
-   !    CALL get_reference_point(rcc, qs_env=qs_env, reference=reference, ref_point=ref_point)
-   !    rcc = pbc(rcc, cell)
+      CALL get_reference_point(rcc, qs_env=qs_env, reference=reference, ref_point=ref_point)
+      rcc = pbc(rcc, cell)
 
-   !    maxmom = section_get_ival(section_vals=input, &
-   !                               keyword_name="DFT%PRINT%MOMENTS%MAX_MOMENT")
-   !    nmom = MIN(maxmom, current_maxl)
-   !    nm = 3
+      maxmom = section_get_ival(section_vals=input, &
+                                 keyword_name="DFT%PRINT%MOMENTS%MAX_MOMENT")
+      nmom = MIN(maxmom, current_maxl)
+      nm = 3
 
-   !    NULLIFY (sap_ppnl, sab_all, qs_kind_set)
-   !    CALL get_qs_env(qs_env, &
-   !                    sap_ppnl=sap_ppnl, &
-   !                    sab_all=sab_all, &
-   !                    qs_kind_set=qs_kind_set)
+      NULLIFY (sap_ppnl, sab_all, qs_kind_set)
+      CALL get_qs_env(qs_env, &
+                      sap_ppnl=sap_ppnl, &
+                      sab_all=sab_all, &
+                      qs_kind_set=qs_kind_set)
 
-   !    eps_ppnl = dft_control%qs_control%eps_ppnl
+      eps_ppnl = dft_control%qs_control%eps_ppnl
 
-   !    IF (ASSOCIATED(rtm%el_moments)) THEN
-   !      CALL build_local_moment_matrix(qs_env, rtm%el_moments, nmom, ref_point=rcc)  
-   !    ENDIF
+      IF (ASSOCIATED(rtm%el_moments)) THEN
+        NULLIFY(calculate)
+        CALL get_rtm(rtm, el_moments = calculate)
+        CALL build_local_moment_matrix(qs_env, calculate, nmom, ref_point=rcc)  
+      ENDIF
 
-   !    IF (ASSOCIATED(rtm%sinmat) .AND. ASSOCIATED(rtm%cosmat)) THEN
-   !      DO i = 1, 3
-   !        kvec(:) = twopi*cell%h_inv(i, :)
-   !        CALL build_berry_moment_matrix(qs_env, rtm%cosmat(i)%matrix, rtm%sinmat(i)%matrix, kvec)
-   !      ENDDO
-   !    ENDIF
+      IF (ASSOCIATED(rtm%sinmat) .AND. ASSOCIATED(rtm%cosmat)) THEN
+        DO i = 1, 3
+          kvec(:) = twopi*cell%h_inv(i, :)
+          CALL build_berry_moment_matrix(qs_env, rtm%cosmat(i)%matrix, rtm%sinmat(i)%matrix, kvec)
+        ENDDO
+      ENDIF
       
-   !    IF (ASSOCIATED(rtm%magdipole_moment)) THEN
-   !      CALL build_local_magmom_matrix(qs_env, rtm%magdipole_moment, nm, ref_point=rcc)
-   !    ENDIF
+      IF (ASSOCIATED(rtm%magdipole_moment)) THEN
+        NULLIFY(calculate)
+        CALL get_rtm(rtm, magdipole_moment = calculate)
+        CALL build_local_magmom_matrix(qs_env, calculate, nm, ref_point=rcc)
+      ENDIF
       
-   !    IF (ASSOCIATED(rtm%momentum)) THEN
-   !      CALL build_lin_mom_matrix(qs_env, rtm%momentum)
-   !    ENDIF 
+      IF (ASSOCIATED(rtm%momentum)) THEN
+        CALL build_lin_mom_matrix(qs_env, rtm%momentum)
+      ENDIF 
       
-   !    IF (ASSOCIATED(rtm%com_rVnl)) THEN
-   !      CALL build_com_rpnl(rtm%com_rVnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, qs_env)
-   !    ENDIF
+      IF (ASSOCIATED(rtm%com_rVnl)) THEN
+        CALL build_com_rpnl(rtm%com_rVnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, qs_env)
+      ENDIF
       
-   !    IF (ASSOCIATED(rtm%com_rxrVnl)) THEN
-   !      CALL build_com_rxrpnl(qs_env, rtm%com_rxrVnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl)
-   !    ENDIF
+      IF (ASSOCIATED(rtm%com_rxrVnl)) THEN
+        CALL build_com_rxrpnl(qs_env, rtm%com_rxrVnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl)
+      ENDIF
 
-   !    CALL timestop(handle)
+      CALL timestop(handle)
 
-   ! END SUBROUTINE moments_ao_basis
+   END SUBROUTINE moment_matrices_ao_basis
 
 END MODULE qs_moments
 

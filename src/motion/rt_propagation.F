@@ -59,6 +59,8 @@ MODULE rt_propagation
    USE qs_mo_types,                     ONLY: get_mo_set,&
                                               init_mo_set,&
                                               mo_set_p_type
+   USE qs_moments,                      ONLY: moment_matrices_ao_basis
+   USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
    USE rt_delta_pulse,                  ONLY: apply_delta_pulse,&
                                               apply_delta_pulse_periodic
    USE rt_hfx_utils,                    ONLY: rtp_hfx_rebuild
@@ -409,8 +411,11 @@ CONTAINS
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(section_vals_type), POINTER                   :: input
-
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_all, sab_orb
+      
       NULLIFY (matrix_s, dft_control, input)
+
       CALL get_qs_env(qs_env, dft_control=dft_control, input = input)
 
       SELECT CASE (rtp_control%initial_wfn)
@@ -464,11 +469,13 @@ CONTAINS
       END SELECT
 
       IF (rtp_control%fixed_ions) THEN
-        NULLIFY(matrix_s)
-        CALL get_qs_env(qs_env, matrix_s=matrix_s)
+        NULLIFY(matrix_s, sab_all, sab_orb)
+        CALL get_qs_env(qs_env, matrix_s=matrix_s, sab_orb = sab_orb, sab_all = sab_all)
         NULLIFY(qs_env%rtp%rtm)
         ALLOCATE(qs_env%rtp%rtm)
-        CALL rt_moments_create(qs_env%rtp%rtm, input, matrix_s(1)%matrix)
+        CALL rt_moments_create(qs_env%rtp%rtm, input, matrix_s(1)%matrix, sab_orb, sab_all)
+
+        CALL moment_matrices_ao_basis(qs_env%rtp%rtm, qs_env)
       ENDIF
 
    END SUBROUTINE rt_initial_guess
