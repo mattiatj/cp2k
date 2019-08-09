@@ -112,6 +112,10 @@ CONTAINS
       TYPE(section_vals_type), POINTER                   :: hfx_sections, input, ls_scf_section, &
                                                             md_section, motion_section, &
                                                             print_moments_section
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_all, sab_orb
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
+
 
       NULLIFY (qs_env, rtp_control, dft_control)
 
@@ -170,6 +174,13 @@ CONTAINS
       END IF
       CALL init_propagators(qs_env)
       IF (rtp_control%fixed_ions) THEN
+         NULLIFY(matrix_s, sab_all, sab_orb)
+         CALL get_qs_env(qs_env, matrix_s=matrix_s, sab_orb = sab_orb, sab_all = sab_all)
+         NULLIFY(qs_env%rtp%rtm)
+         ALLOCATE(qs_env%rtp%rtm)
+         CALL rt_moments_create(qs_env%rtp%rtm, input, matrix_s(1)%matrix, sab_orb, sab_all)
+         CALL moment_matrices_ao_basis(qs_env%rtp%rtm, qs_env)
+
          CALL run_propagation(qs_env, force_env, globenv)
       ELSE
          rtp_control%initial_step = .TRUE.
@@ -411,8 +422,6 @@ CONTAINS
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(section_vals_type), POINTER                   :: input
-      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-         POINTER                                         :: sab_all, sab_orb
       
       NULLIFY (matrix_s, dft_control, input)
 
@@ -467,16 +476,6 @@ CONTAINS
 
          qs_env%run_rtp = .TRUE.
       END SELECT
-
-      IF (rtp_control%fixed_ions) THEN
-        NULLIFY(matrix_s, sab_all, sab_orb)
-        CALL get_qs_env(qs_env, matrix_s=matrix_s, sab_orb = sab_orb, sab_all = sab_all)
-        NULLIFY(qs_env%rtp%rtm)
-        ALLOCATE(qs_env%rtp%rtm)
-        CALL rt_moments_create(qs_env%rtp%rtm, input, matrix_s(1)%matrix, sab_orb, sab_all)
-
-        CALL moment_matrices_ao_basis(qs_env%rtp%rtm, qs_env)
-      ENDIF
 
    END SUBROUTINE rt_initial_guess
 

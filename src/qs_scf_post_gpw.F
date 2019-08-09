@@ -169,7 +169,8 @@ MODULE qs_scf_post_gpw
    USE qs_moments,                      ONLY: qs_com_rrpnl,&
                                               qs_moment_berry_phase,&
                                               qs_moment_locop,&
-                                              qs_moment_vel
+                                              qs_moment_vel,&
+                                              moment_matrices_ao_basis
    USE qs_neighbor_list_types,          ONLY: get_iterator_info,&
                                               get_neighbor_list_set_p,&
                                               neighbor_list_iterate,&
@@ -1106,6 +1107,7 @@ CONTAINS
       LOGICAL                                            :: ang_mom_com_nl, com_nonloc, do_kpoints, &
                                                             lin_mom, magnetic, periodic, rrpnl
       REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
+      ! TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(section_vals_type), POINTER                   :: print_key
 
       CALL timeset(routineN, handle)
@@ -1149,26 +1151,29 @@ CONTAINS
             END IF
          END IF
 
-         CALL get_qs_env(qs_env, do_kpoints=do_kpoints)
+         CALL get_qs_env(qs_env, do_kpoints=do_kpoints) !, dft_control = dft_control)
+
+         ! IF (qs_env%run_rtp) THEN
+         !    IF (.NOT. dft_control%rtp_control%fixed_ions) THEN
+         !      IF (ASSOCIATED(qs_env%rtp%rtm)) THEN
+         !        CALL moment_matrices_ao_basis(qs_env%rtp%rtm, qs_env)
+         !      ENDIF
+         !    ENDIF
+         ! ENDIF
 
          IF (do_kpoints) THEN
             CPWARN("Moments not implemented for k-point calculations!")
          ELSE
-            IF (periodic) THEN
-               CALL qs_moment_berry_phase(qs_env, magnetic, maxmom, reference, ref_point, unit_nr)
-               ! CALL qs_moment_locop(qs_env, magnetic, ang_mom_com_nl, maxmom+1, reference, ref_point, unit_nr)
-            ELSE
-               CALL qs_moment_locop(qs_env, magnetic, ang_mom_com_nl, maxmom, reference, ref_point, unit_nr)
-               IF (rrpnl) CALL qs_com_rrpnl(qs_env, unit_nr, ref_point)
-            END IF
-         END IF
-
-         ! IF (magnetic) THEN
-         !    CALL qs_moment_magnetic(qs_env, reference, ref_point, unit_nr)
-         ! ENDIF
-
-         IF (lin_mom) THEN
-            CALL qs_moment_vel(qs_env, com_nonloc, unit_nr)
+           IF (periodic) THEN
+              CALL qs_moment_berry_phase(qs_env, magnetic, maxmom, reference, ref_point, unit_nr)
+              ! CALL qs_moment_locop(qs_env, magnetic, ang_mom_com_nl, maxmom+1, reference, ref_point, unit_nr)
+           ELSE
+              CALL qs_moment_locop(qs_env, magnetic, ang_mom_com_nl, maxmom, reference, ref_point, unit_nr)
+              IF (rrpnl) CALL qs_com_rrpnl(qs_env, unit_nr, ref_point)
+           END IF
+           IF (lin_mom) THEN
+             CALL qs_moment_vel(qs_env, com_nonloc, unit_nr)
+           END IF
          END IF
 
          CALL cp_print_key_finished_output(unit_nr=unit_nr, logger=logger, &

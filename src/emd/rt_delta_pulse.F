@@ -53,7 +53,7 @@ MODULE rt_delta_pulse
                                               section_vals_val_get
    USE kinds,                           ONLY: dp
    USE mathconstants,                   ONLY: twopi
-   USE moments_utils,                   ONLY: get_reference_point
+   USE particle_types,                  ONLY: particle_type
    USE qs_environment_types,            ONLY: get_qs_env,&
                                               qs_environment_type
    USE qs_kind_types,                   ONLY: qs_kind_type
@@ -95,12 +95,11 @@ CONTAINS
       COMPLEX(KIND=dp), DIMENSION(:), POINTER            :: eigenvalues_sqrt
       INTEGER                                            :: handle, icol, idir, irow, ispin, nao, &
                                                             ncol_local, nmo, nrow_global, &
-                                                            nrow_local, nvirt, reference
+                                                            nrow_local, nvirt
       INTEGER, DIMENSION(:), POINTER                     :: col_indices, row_indices
       LOGICAL                                            :: com_nonloc
       REAL(KIND=dp)                                      :: eps_ppnl, factor
-      REAL(KIND=dp), DIMENSION(3)                        :: kvec, rcc
-      REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
+      REAL(KIND=dp), DIMENSION(3)                        :: kvec
       REAL(kind=dp), DIMENSION(:), POINTER               :: eigenvalues
       REAL(KIND=dp), DIMENSION(:, :), POINTER            :: local_data
       TYPE(cell_type), POINTER                           :: cell
@@ -118,8 +117,9 @@ CONTAINS
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(section_vals_type), POINTER                   :: input
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
 
-      NULLIFY (cell, mos, rtp, matrix_s, matrix_ks, dft_control, input)
+      NULLIFY (cell, mos, rtp, matrix_s, matrix_ks, dft_control, input, particle_set)
       CALL timeset(routineN, handle)
 
       ! we need the overlap and ks matrix for a full diagionalization
@@ -130,7 +130,8 @@ CONTAINS
                       matrix_s=matrix_s, &
                       matrix_ks=matrix_ks, &
                       dft_control=dft_control, &
-                      input=input)
+                      input=input,&
+                      particle_set = particle_set)
 
       com_nonloc = section_get_lval(section_vals=input, keyword_name="DFT%REAL_TIME_PROPAGATION%COM_NONLOC")
       CALL get_rtp(rtp=rtp, S_inv=S_inv)
@@ -148,13 +149,6 @@ CONTAINS
 
       ! calculate non-local commutator
       IF (com_nonloc) THEN
-
-         reference = section_get_ival(section_vals=input, &
-                                              keyword_name="DFT%PRINT%MOMENTS%REFERENCE")
-         CALL section_vals_val_get(input, "DFT%PRINT%MOMENTS%REF_POINT", r_vals=ref_point)
-
-         CALL get_reference_point(rcc, qs_env=qs_env, reference=reference, ref_point=ref_point)
-
          NULLIFY (qs_kind_set, sab_all, sap_ppnl)
          CALL get_qs_env(qs_env, &
                          sap_ppnl=sap_ppnl, &
@@ -165,7 +159,7 @@ CONTAINS
          NULLIFY (matrix_vr)
          CALL dbcsr_allocate_matrix_set(matrix_vr, 3)
          CALL initialize_dbcsr_operator_matrix(qs_env, matrix_vr, dbcsr_type_no_symmetry)
-         CALL build_com_rpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, qs_env)
+         CALL build_com_rpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, particle_set, cell)
       ENDIF
 
       DO ispin = 1, SIZE(matrix_ks)
