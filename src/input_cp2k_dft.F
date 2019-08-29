@@ -1692,6 +1692,52 @@ CONTAINS
                           lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(print_key, keyword)
       CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, &
+                          name="STORE_MOMENT_MATRICES", &
+                          description="Store moment matrices for fixed ions", &
+                          usage="STORE_MOMENT_MATRICES .TRUE.", &
+                          repeats=.FALSE., &
+                          n_var=1, &
+                          default_l_val=.FALSE., &
+                          lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, &
+                          name="SECOND_REFERENCE_POINT", &
+                          description="Use second reference point", &
+                          usage="SECOND_REFERENCE_POINT .TRUE.", &
+                          repeats=.FALSE., &
+                          n_var=1, &
+                          default_l_val=.FALSE., &
+                          lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="REFERENCE_2", &
+                          variants=s2a("REF_2"), &
+                          description="Define a second reference point for the calculation of the electrostatic moment.", &
+                          usage="REFERENCE_2 COM", &
+                          enum_c_vals=s2a("COM", "COAC", "USER_DEFINED", "ZERO"), &
+                          enum_desc=s2a("Use Center of Mass", &
+                                        "Use Center of Atomic Charges", &
+                                        "Use User Defined Point (Keyword:REF_POINT)", &
+                                        "Use Origin of Coordinate System"), &
+                          enum_i_vals=(/use_mom_ref_com, &
+                                        use_mom_ref_coac, &
+                                        use_mom_ref_user, &
+                                        use_mom_ref_zero/), &
+                          default_i_val=use_mom_ref_zero)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="REFERENCE_POINT_2", &
+                          variants=s2a("REF_POINT_2"), &
+                          description="Fixed second reference point for the calculations of the electrostatic moment.", &
+                          usage="REFERENCE_POINT_2 x y z", &
+                          repeats=.FALSE., &
+                          n_var=3, default_r_vals=(/0._dp, 0._dp, 0._dp/), &
+                          type_of_var=real_t, &
+                          unit_str='bohr')
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
       
       CALL section_add_subsection(section, print_key)
       CALL section_release(print_key)

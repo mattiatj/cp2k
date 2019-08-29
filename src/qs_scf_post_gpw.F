@@ -1105,7 +1105,7 @@ CONTAINS
       CHARACTER(LEN=default_path_length)                 :: filename
       INTEGER                                            :: handle, maxmom, reference, unit_nr
       LOGICAL                                            :: ang_mom_com_nl, com_nonloc, do_kpoints, &
-                                                            lin_mom, magnetic, periodic, rrpnl
+                                                            lin_mom, magnetic, periodic, rrpnl, second_ref_point
       REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
       ! TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(section_vals_type), POINTER                   :: print_key
@@ -1125,6 +1125,8 @@ CONTAINS
                                       keyword_name="DFT%PRINT%MOMENTS%REFERENCE")
          magnetic = section_get_lval(section_vals=input, &
                                      keyword_name="DFT%PRINT%MOMENTS%MAGNETIC")
+         second_ref_point = section_get_lval(section_vals=input, &
+                                     keyword_name="DFT%PRINT%MOMENTS%SECOND_REFERENCE_POINT")
          rrpnl = section_get_lval(section_vals=input, &
                                   keyword_name="DFT%PRINT%MOMENTS%COM_RRPNL")
          lin_mom = section_get_lval(section_vals=input, &
@@ -1176,8 +1178,47 @@ CONTAINS
            END IF
          END IF
 
-         CALL cp_print_key_finished_output(unit_nr=unit_nr, logger=logger, &
-                                           basis_section=input, print_key_path="DFT%PRINT%MOMENTS")
+         IF (second_ref_point) THEN
+            reference = section_get_ival(section_vals=input, &
+                                      keyword_name="DFT%PRINT%MOMENTS%REFERENCE_2")
+
+            NULLIFY (ref_point)
+            CALL section_vals_val_get(input, "DFT%PRINT%MOMENTS%REF_POINT_2", r_vals=ref_point)
+            unit_nr = cp_print_key_unit_nr(logger=logger, basis_section=input, &
+                                           print_key_path="DFT%PRINT%MOMENTS", extension=".dat", &
+                                           middle_name="moments_refpoint_2", log_filename=.FALSE.)
+
+            IF (output_unit > 0) THEN
+               IF (unit_nr /= output_unit) THEN
+                  INQUIRE (UNIT=unit_nr, NAME=filename)
+                  WRITE (UNIT=output_unit, FMT="(/,T2,A,2(/,T3,A),/)") &
+                      "MOMENTS", "The electric/magnetic moments for the second reference point are written to file:", &
+                     TRIM(filename)
+               ELSE
+                  WRITE (UNIT=output_unit, FMT="(/,T2,A)") "ELECTRIC/MAGNETIC MOMENTS"
+               END IF
+            END IF
+
+            CALL get_qs_env(qs_env, do_kpoints=do_kpoints)
+
+            IF (do_kpoints) THEN
+              CPWARN("Moments not implemented for k-point calculations!")
+            ELSE
+              IF (periodic) THEN
+                 CALL qs_moment_berry_phase(qs_env, magnetic, maxmom, reference, ref_point, unit_nr)
+                 ! CALL qs_moment_locop(qs_env, magnetic, ang_mom_com_nl, maxmom+1, reference, ref_point, unit_nr)
+              ELSE
+                 CALL qs_moment_locop(qs_env, magnetic, ang_mom_com_nl, maxmom, reference, ref_point, unit_nr)
+                 IF (rrpnl) CALL qs_com_rrpnl(qs_env, unit_nr, ref_point)
+              END IF
+              IF (lin_mom) THEN
+                CALL qs_moment_vel(qs_env, com_nonloc, unit_nr)
+              END IF
+            END IF
+          ENDIF
+
+          CALL cp_print_key_finished_output(unit_nr=unit_nr, logger=logger, &
+                               basis_section=input, print_key_path="DFT%PRINT%MOMENTS")
       END IF
 
       CALL timestop(handle)

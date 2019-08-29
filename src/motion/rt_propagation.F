@@ -102,7 +102,7 @@ CONTAINS
       CHARACTER(len=*), PARAMETER :: routineN = 'rt_prop_setup', routineP = moduleN//':'//routineN
 
       INTEGER                                            :: aspc_order
-      LOGICAL                                            :: lin_mom, magnetic_moment
+      LOGICAL                                            :: lin_mom, magnetic_moment, store_moments
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(global_environment_type), POINTER             :: globenv
       TYPE(qs_energy_type), POINTER                      :: energy
@@ -155,6 +155,7 @@ CONTAINS
       CALL section_vals_get(hfx_sections, explicit=rtp%do_hfx)
       CALL section_vals_val_get(print_moments_section, "MAGNETIC", l_val=magnetic_moment)
       CALL section_vals_val_get(print_moments_section, "LIN_MOM", l_val=lin_mom)
+      CALL section_vals_val_get(print_moments_section, "STORE_MOMENT_MATRICES", l_val=store_moments)
 
       ! Track imagniary part of the density if either magn. moments or the expectation value of
       ! the linear momentum are requested
@@ -174,12 +175,14 @@ CONTAINS
       END IF
       CALL init_propagators(qs_env)
       IF (rtp_control%fixed_ions) THEN
-         NULLIFY(matrix_s, sab_all, sab_orb)
-         CALL get_qs_env(qs_env, matrix_s=matrix_s, sab_orb = sab_orb, sab_all = sab_all)
-         NULLIFY(qs_env%rtp%rtm)
-         ALLOCATE(qs_env%rtp%rtm)
-         CALL rt_moments_create(qs_env%rtp%rtm, input, matrix_s(1)%matrix, sab_orb, sab_all)
-         CALL moment_matrices_ao_basis(qs_env%rtp%rtm, qs_env)
+         IF (store_moments) THEN
+            NULLIFY(matrix_s, sab_all, sab_orb)
+            CALL get_qs_env(qs_env, matrix_s=matrix_s, sab_orb = sab_orb, sab_all = sab_all)
+            NULLIFY(qs_env%rtp%rtm)
+            ALLOCATE(qs_env%rtp%rtm)
+            CALL rt_moments_create(qs_env%rtp%rtm, input, matrix_s(1)%matrix, sab_orb, sab_all)
+            CALL moment_matrices_ao_basis(qs_env%rtp%rtm, qs_env)
+         ENDIF
 
          CALL run_propagation(qs_env, force_env, globenv)
       ELSE
