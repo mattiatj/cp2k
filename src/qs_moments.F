@@ -89,7 +89,9 @@ MODULE qs_moments
                                               neighbor_list_iterator_p_type,&
                                               neighbor_list_iterator_release,&
                                               neighbor_list_set_p_type
-   USE qs_operators_ao,                 ONLY: build_lin_mom_matrix
+   USE qs_operators_ao,                 ONLY: build_lin_mom_matrix, &
+                                              build_diffop_matrix, &
+                                              rRc_xyz_der_ao
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_type
    USE rt_propagation_types,            ONLY: get_rtp,&
@@ -109,7 +111,7 @@ MODULE qs_moments
    PUBLIC :: build_berry_kpoint_matrix
    PUBLIC :: qs_moment_berry_phase, qs_moment_locop, qs_moment_vel
    PUBLIC :: qs_com_rrpnl, initialize_dbcsr_operator_matrix
-   PUBLIC :: moment_matrices_ao_basis
+   PUBLIC :: moment_matrices_ao_basis, qs_qupole_vel
 
 CONTAINS
 
@@ -1931,6 +1933,250 @@ CONTAINS
 
    END SUBROUTINE qs_moment_vel
 
+
+! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param com_nonloc ...
+!> \param unit_number ...
+! **************************************************************************************************
+   SUBROUTINE qs_qupole_vel(qs_env, com_nonloc, nmoments, reference, ref_point, unit_number)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      LOGICAL, INTENT(IN)                                :: com_nonloc
+      REAL(dp), DIMENSION(:), POINTER                    :: ref_point
+      INTEGER, INTENT(IN)                                :: nmoments, reference, unit_number
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'qs_qupole_vel', routineP = moduleN//':'//routineN
+
+      CHARACTER(LEN=8), ALLOCATABLE, DIMENSION(:)        :: rlab
+      CHARACTER(LEN=default_string_length)               :: description, description_nonloc
+      INTEGER                                            :: handle, ind, ispin, ix, iy, iz, nm, idir, &
+                                                            nmom, index_sym
+      ! LOGICAL                                            :: nodealloc, nodealloc_2
+      REAL(dp)                                           :: eps_ppnl, strace, trace, exp_s
+      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: qupole_vel, qupole_vel_im, qupole, qupole_vel_nonloc,&
+                                                            qupole_vel_im_nonloc, qupole_nonloc
+      REAL(dp), DIMENSION(3)                             :: rcc
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, matrix_vr, moments_ao, rho_ao, &
+                                                            rho_ao_im
+      TYPE(dbcsr_p_type), DIMENSION(:,:), POINTER        :: momdiff
+      TYPE(dbcsr_type), POINTER                          :: mat_tmp_ao
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_all, sap_ppnl
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
+      TYPE(qs_rho_type), POINTER                         :: rho
+      TYPE(cell_type), POINTER                           :: cell
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      ! TYPE(rt_moments_type), POINTER                     :: rtm
+
+      CPASSERT(ASSOCIATED(qs_env))
+      CALL timeset(routineN, handle)
+
+      ! reference point
+      CALL get_reference_point(rcc, qs_env=qs_env, reference=reference, ref_point=ref_point)
+      ! only allow for moments up to maxl set by basis
+      nmom = MIN(nmoments, current_maxl)
+
+      nm = 3
+      ! nodealloc = .FALSE.
+      ! nodealloc_2 = .FALSE.
+      
+      ALLOCATE (qupole_vel(9))
+      ALLOCATE (qupole_vel_nonloc(9))
+      ALLOCATE (qupole(6))
+      ALLOCATE (qupole_nonloc(6))
+      ALLOCATE (qupole_vel_im(9))
+      ALLOCATE (qupole_vel_im_nonloc(9))
+      ALLOCATE (rlab(6+1))
+
+      qupole_vel = 0._dp
+      qupole_vel_nonloc = 0._dp
+      qupole = 0._dp
+      qupole_nonloc = 0._dp
+      qupole_vel_im = 0._dp
+      qupole_vel_im_nonloc = 0._dp
+      rlab = ""
+      trace = 0._dp
+      exp_s = 0._dp
+
+      DO ind = 1, 6
+         ix = indco(1, ind+4)
+         iy = indco(2, ind+4)
+         iz = indco(3, ind+4)
+         CALL set_label(rlab(ind), ix, iy, iz)
+      ENDDO
+
+      ! Allocate dbcsr momentum matrix in ao basis
+      NULLIFY (moments_ao, matrix_s, momdiff)
+
+      ! IF (qs_env%run_rtp .AND. ASSOCIATED(qs_env%rtp%rtm)) THEN
+      !   NULLIFY(rtm)
+      !   CALL get_rtp(qs_env%rtp, rtm = rtm)
+      !   CALL get_rtm(rtm, momentum = moments_ao)
+      !   nodealloc = .TRUE.
+      ! ELSE
+        CALL dbcsr_allocate_matrix_set(moments_ao, nm)
+        CALL initialize_dbcsr_operator_matrix(qs_env, moments_ao, dbcsr_type_no_symmetry)
+        ! Calculate linear momentum matrix in ao basis
+      ! ENDIF
+
+        CALL dbcsr_allocate_matrix_set(momdiff, nm, 3)
+        DO ind = 1, nm
+          DO idir = 1, 3
+            ALLOCATE(momdiff(ind,  idir)%matrix)
+            CALL dbcsr_copy(momdiff(ind, idir)%matrix, moments_ao(ind)%matrix, &
+                  "momdiff"//"-"//TRIM(ADJUSTL(cp_to_string(idir*ind))))
+          ENDDO
+        ENDDO
+
+      CALL build_diffop_matrix(qs_env, moments_ao, momdiff, 1, rcc)
+      ! CALL rRc_xyz_der_ao(moments_ao, momdiff, qs_env, rcc, 1)
+
+      NULLIFY (rho, dft_control)
+      CALL get_qs_env(qs_env=qs_env, &
+                      dft_control=dft_control, &
+                      rho=rho)
+
+      ! Real part of the density
+      NULLIFY (rho_ao)
+      CALL qs_rho_get(rho, rho_ao=rho_ao)
+
+      ! temporary matrix for trace
+      CALL get_qs_env(qs_env=qs_env, matrix_s=matrix_s)
+      NULLIFY (mat_tmp_ao)
+      ALLOCATE (mat_tmp_ao)
+      CALL dbcsr_desymmetrize(matrix_s(1)%matrix, mat_tmp_ao)
+
+      ! Calculate expectation value over real part
+      DO ind = 1, 3 
+        DO idir = 1, 3
+          strace = 0._dp
+          DO ispin = 1, dft_control%nspins
+            CALL dbcsr_set(mat_tmp_ao, 0._dp)
+            CALL dbcsr_multiply("T", "N", 1._dp, rho_ao(ispin)%matrix, momdiff(ind, idir)%matrix, 0._dp, mat_tmp_ao)
+            CALL dbcsr_trace(mat_tmp_ao, trace)
+            strace = strace + trace
+          ENDDO
+          qupole_vel((ind-1)*3 + idir) = strace
+        ENDDO
+      ENDDO
+
+      IF (com_nonloc) THEN
+        NULLIFY (sap_ppnl, sab_all, qs_kind_set, particle_set, cell)
+        CALL get_qs_env(qs_env, &
+                        sap_ppnl=sap_ppnl, &
+                        sab_all=sab_all, &
+                        qs_kind_set=qs_kind_set,&
+                        particle_set = particle_set,&
+                        cell = cell)
+        eps_ppnl = dft_control%qs_control%eps_ppnl
+        NULLIFY (matrix_vr)
+        CALL dbcsr_allocate_matrix_set(matrix_vr, 6)
+        CALL initialize_dbcsr_operator_matrix(qs_env, matrix_vr, dbcsr_type_no_symmetry)
+        CALL build_com_rrpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, qs_env)
+      
+        DO ind = 1, 3 
+          DO idir = 1, 3
+            strace = 0._dp
+            CALL fold_indices_sym(ind, idir, index_sym)
+            DO ispin = 1, dft_control%nspins
+              CALL dbcsr_set(mat_tmp_ao, 0._dp)
+              CALL dbcsr_multiply("T", "N", 1._dp, rho_ao(ispin)%matrix, matrix_vr(index_sym)%matrix, 0._dp, mat_tmp_ao)
+              CALL dbcsr_trace(mat_tmp_ao, trace)
+              strace = strace + trace
+            ENDDO
+            qupole_vel_nonloc((ind-1)*3 + idir) = qupole_vel((ind-1)*3 + idir) + strace
+          ENDDO
+        ENDDO
+      ENDIF
+
+      trace = 0.0_dp
+      DO ispin = 1, dft_control%nspins
+         CALL dbcsr_dot(rho_ao(ispin)%matrix, matrix_s(1)%matrix, trace)
+         exp_s = exp_s+trace
+      END DO
+
+      ! imaginary part of the density for RTP
+      IF (qs_env%run_rtp) THEN
+         NULLIFY (rho_ao_im)
+         CALL qs_rho_get(rho, rho_ao_im=rho_ao_im)
+
+        ! Calculate expectation value over imaginary part
+        DO ind = 1, 3 
+          DO idir = 1, 3
+            strace = 0._dp
+            DO ispin = 1, dft_control%nspins
+              CALL dbcsr_set(mat_tmp_ao, 0._dp)
+              CALL dbcsr_multiply("T", "N", 1._dp, rho_ao_im(ispin)%matrix, momdiff(ind, idir)%matrix, 0._dp, mat_tmp_ao)
+              CALL dbcsr_trace(mat_tmp_ao, trace)
+              strace = strace + trace
+            ENDDO
+            qupole_vel_im((ind-1)*3 + idir) = strace
+          ENDDO
+        ENDDO
+
+        IF (com_nonloc) THEN
+          DO ind = 1, 3 
+            DO idir = 1, 3
+              strace = 0._dp
+              CALL fold_indices_sym(ind, idir, index_sym)
+              DO ispin = 1, dft_control%nspins
+                CALL dbcsr_set(mat_tmp_ao, 0._dp)
+                CALL dbcsr_multiply("T", "N", 1._dp, rho_ao_im(ispin)%matrix, matrix_vr(index_sym)%matrix, 0._dp, mat_tmp_ao)
+                CALL dbcsr_trace(mat_tmp_ao, trace)
+                strace = strace + trace
+              ENDDO
+              qupole_vel_im_nonloc((ind-1)*3 + idir) = qupole_vel_im((ind-1)*3 + idir) + strace
+            ENDDO
+          ENDDO
+        ENDIF
+      ENDIF
+
+      qupole(1) = 2 * (qupole_vel(1) + qupole_vel_im(1)) - exp_s
+      qupole(2) = qupole_vel(2) + qupole_vel_im(2) + qupole_vel(4) + qupole_vel_im(4)
+      qupole(3) = qupole_vel(3) + qupole_vel_im(3) + qupole_vel(7) + qupole_vel_im(7)
+      qupole(4) = 2 * (qupole_vel(5) + qupole_vel_im(5)) - exp_s
+      qupole(5) = qupole_vel(6) + qupole_vel_im(6) + qupole_vel(8) + qupole_vel_im(8)
+      qupole(6) = 2*(qupole_vel(9) + qupole_vel_im(9) ) - exp_s
+
+      qupole_nonloc(1) = 2 * (qupole_vel_nonloc(1) + qupole_vel_im_nonloc(1)) - exp_s
+      qupole_nonloc(2) = qupole_vel_nonloc(2) + qupole_vel_im_nonloc(2) + qupole_vel_nonloc(4) + qupole_vel_im_nonloc(4)
+      qupole_nonloc(3) = qupole_vel_nonloc(3) + qupole_vel_im_nonloc(3) + qupole_vel_nonloc(7) + qupole_vel_im_nonloc(7)
+      qupole_nonloc(4) = 2 * (qupole_vel_nonloc(5) + qupole_vel_im_nonloc(5)) - exp_s
+      qupole_nonloc(5) = qupole_vel_nonloc(6) + qupole_vel_im_nonloc(6) + qupole_vel_nonloc(8) + qupole_vel_im_nonloc(8)
+      qupole_nonloc(6) = 2*(qupole_vel_nonloc(9) + qupole_vel_im_nonloc(9) ) - exp_s
+
+      qupole(:) = -qupole(:)
+      qupole_nonloc(:) = -qupole_nonloc(:)
+
+      CALL dbcsr_deallocate_matrix_set(moments_ao)
+      CALL dbcsr_deallocate_matrix(mat_tmp_ao)
+      CALL dbcsr_deallocate_matrix_set(momdiff)
+      IF (com_nonloc) CALL dbcsr_deallocate_matrix_set(matrix_vr)
+
+
+      description = "Expectation value Q_vel [a. u.]"
+      CALL print_second_moments(unit_number, qupole, rlab, description)
+
+      IF (com_nonloc) THEN
+         description_nonloc = "Expectation value of Q_vel incl. nonloc com [a.u.]"
+         CALL print_second_moments(unit_number, qupole_nonloc, rlab, description_nonloc)
+      ENDIF
+
+      DEALLOCATE (rlab)
+      DEALLOCATE (qupole_vel)
+      DEALLOCATE (qupole_vel_im)
+      DEALLOCATE (qupole)
+      DEALLOCATE (qupole_nonloc)
+      DEALLOCATE (qupole_vel_nonloc)
+      DEALLOCATE (qupole_vel_im_nonloc)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE qs_qupole_vel
+
+
 ! **************************************************************************************************
 !> \brief ...
 !> \param qs_env ...
@@ -2025,7 +2271,6 @@ CONTAINS
       ! Calculate linear momentum matrix in ao basis
       eps_ppnl = dft_control%qs_control%eps_ppnl
       CALL build_com_rrpnl(com_rrpnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, qs_env, ref_point)
-      ! CALL build_com_rpnl_r(com_rpnl_r, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, .TRUE.)
 
       NULLIFY (rho, dft_control)
       CALL get_qs_env(qs_env=qs_env, &
@@ -2067,8 +2312,6 @@ CONTAINS
       !    END DO
       !    exp_value_2(ind) = -strace
       ! END DO
-
-      ! CALL build_com_rpnl_r(com_rpnl_r, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, .FALSE.)
 
       ! ! Calculate expectation value over real part
       ! DO ind = 1, SIZE(com_rpnl_r)
@@ -2336,6 +2579,52 @@ CONTAINS
       ENDIF
 
    END SUBROUTINE print_second_moments
+
+
+! **************************************************************************************************
+!> \brief turn two Cartesian indices into one for symmetric tensors (e.g. 2,1 ==> 2; 3,2 ==> 5)
+!> \param ind1 ...
+!> \param ind2 ...
+!> \param result ...
+! **************************************************************************************************
+   SUBROUTINE fold_indices_sym(ind1, ind2, result)
+    INTEGER, INTENT(IN)                                 :: ind1, ind2
+    INTEGER, INTENT(OUT)                                :: result
+
+    IF (ind1 == 1 .AND. ind2 == 1) result = 1
+    IF (ind1 == 1 .AND. ind2 == 2) result = 2
+    IF (ind1 == 1 .AND. ind2 == 3) result = 3
+    IF (ind1 == 2 .AND. ind2 == 1) result = 2
+    IF (ind1 == 2 .AND. ind2 == 2) result = 4
+    IF (ind1 == 2 .AND. ind2 == 3) result = 5
+    IF (ind1 == 3 .AND. ind2 == 1) result = 3
+    IF (ind1 == 3 .AND. ind2 == 2) result = 5
+    IF (ind1 == 3 .AND. ind2 == 3) result = 6
+
+   END SUBROUTINE fold_indices_sym
+
+
+! **************************************************************************************************
+!> \brief turn two Cartesian indices into one for non symmetric tensors (e.g. 2,1 ==> 4; 3,2 ==> 8)
+!> \param ind1 ...
+!> \param ind2 ...
+!> \param result ...
+! **************************************************************************************************
+   SUBROUTINE fold_indices(ind1, ind2, result)
+    INTEGER, INTENT(IN)                                 :: ind1, ind2
+    INTEGER, INTENT(OUT)                                :: result
+
+    IF (ind1 == 1 .AND. ind2 == 1) result = 1
+    IF (ind1 == 1 .AND. ind2 == 2) result = 2
+    IF (ind1 == 1 .AND. ind2 == 3) result = 3
+    IF (ind1 == 2 .AND. ind2 == 1) result = 4
+    IF (ind1 == 2 .AND. ind2 == 2) result = 5
+    IF (ind1 == 2 .AND. ind2 == 3) result = 6
+    IF (ind1 == 3 .AND. ind2 == 1) result = 7
+    IF (ind1 == 3 .AND. ind2 == 2) result = 8
+    IF (ind1 == 3 .AND. ind2 == 3) result = 9
+
+   END SUBROUTINE fold_indices
 
 ! **************************************************************************************************
 !> \brief ...

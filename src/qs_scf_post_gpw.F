@@ -170,7 +170,7 @@ MODULE qs_scf_post_gpw
                                               qs_moment_berry_phase,&
                                               qs_moment_locop,&
                                               qs_moment_vel,&
-                                              moment_matrices_ao_basis
+                                              qs_qupole_vel
    USE qs_neighbor_list_types,          ONLY: get_iterator_info,&
                                               get_neighbor_list_set_p,&
                                               neighbor_list_iterate,&
@@ -1105,7 +1105,8 @@ CONTAINS
       CHARACTER(LEN=default_path_length)                 :: filename
       INTEGER                                            :: handle, maxmom, reference, unit_nr
       LOGICAL                                            :: ang_mom_com_nl, com_nonloc, do_kpoints, &
-                                                            lin_mom, magnetic, periodic, rrpnl, second_ref_point
+                                                            lin_mom, magnetic, periodic, rrpnl, second_ref_point, &
+                                                            qupole_vel
       REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
       ! TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(section_vals_type), POINTER                   :: print_key
@@ -1131,6 +1132,8 @@ CONTAINS
                                   keyword_name="DFT%PRINT%MOMENTS%COM_RRPNL")
          lin_mom = section_get_lval(section_vals=input, &
                                     keyword_name="DFT%PRINT%MOMENTS%LIN_MOM")
+         qupole_vel = section_get_lval(section_vals=input, &
+                                    keyword_name="DFT%PRINT%MOMENTS%Q_VEL")
          com_nonloc = section_get_lval(section_vals=input, &
                                        keyword_name="DFT%PRINT%MOMENTS%COM_NONLOC")
          ang_mom_com_nl = section_get_lval(section_vals=input, &
@@ -1155,14 +1158,6 @@ CONTAINS
 
          CALL get_qs_env(qs_env, do_kpoints=do_kpoints) !, dft_control = dft_control)
 
-         ! IF (qs_env%run_rtp) THEN
-         !    IF (.NOT. dft_control%rtp_control%fixed_ions) THEN
-         !      IF (ASSOCIATED(qs_env%rtp%rtm)) THEN
-         !        CALL moment_matrices_ao_basis(qs_env%rtp%rtm, qs_env)
-         !      ENDIF
-         !    ENDIF
-         ! ENDIF
-
          IF (do_kpoints) THEN
             CPWARN("Moments not implemented for k-point calculations!")
          ELSE
@@ -1175,6 +1170,9 @@ CONTAINS
            END IF
            IF (lin_mom) THEN
              CALL qs_moment_vel(qs_env, com_nonloc, unit_nr)
+           END IF
+           IF (qupole_vel) THEN
+             CALL qs_qupole_vel(qs_env, com_nonloc, maxmom, reference, ref_point, unit_nr)
            END IF
          END IF
 
@@ -1213,6 +1211,9 @@ CONTAINS
               END IF
               IF (lin_mom) THEN
                 CALL qs_moment_vel(qs_env, com_nonloc, unit_nr)
+              END IF
+              IF (qupole_vel) THEN
+                  CALL qs_qupole_vel(qs_env, com_nonloc, maxmom, reference, ref_point, unit_nr)
               END IF
             END IF
           ENDIF

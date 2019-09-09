@@ -768,18 +768,18 @@ CONTAINS
                            !            bcint(1, 1, 1), nb, 1.0_dp, blocks(3)%block, SIZE(blocks(3)%block, 1))
 
                            ! + r_alpha * Vnl * r_beta
-                           CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 2), na, &
-                                      bcint(1, 1, 2), nb, 1.0_dp, blocks(1)%block, SIZE(blocks(1)%block, 1)) ! xVx
-                           CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 2), na, &
-                                      bcint(1, 1, 3), nb, 1.0_dp, blocks(2)%block, SIZE(blocks(2)%block, 1)) ! xVy
-                           CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 2), na, &
-                                      bcint(1, 1, 4), nb, 1.0_dp, blocks(3)%block, SIZE(blocks(3)%block, 1)) ! xVz
-                           CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 3), na, &
-                                      bcint(1, 1, 3), nb, 1.0_dp, blocks(4)%block, SIZE(blocks(4)%block, 1)) ! yVy
-                           CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 3), na, &
-                                      bcint(1, 1, 4), nb, 1.0_dp, blocks(5)%block, SIZE(blocks(5)%block, 1)) ! yVz
-                           CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 4), na, &
-                                      bcint(1, 1, 4), nb, 1.0_dp, blocks(6)%block, SIZE(blocks(6)%block, 1)) ! zVz
+                           ! CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 2), na, &
+                           !            bcint(1, 1, 2), nb, 1.0_dp, blocks(1)%block, SIZE(blocks(1)%block, 1)) ! xVx
+                           ! CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 2), na, &
+                           !            bcint(1, 1, 3), nb, 1.0_dp, blocks(2)%block, SIZE(blocks(2)%block, 1)) ! xVy
+                           ! CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 2), na, &
+                           !            bcint(1, 1, 4), nb, 1.0_dp, blocks(3)%block, SIZE(blocks(3)%block, 1)) ! xVz
+                           ! CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 3), na, &
+                           !            bcint(1, 1, 3), nb, 1.0_dp, blocks(4)%block, SIZE(blocks(4)%block, 1)) ! yVy
+                           ! CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 3), na, &
+                           !            bcint(1, 1, 4), nb, 1.0_dp, blocks(5)%block, SIZE(blocks(5)%block, 1)) ! yVz
+                           ! CALL dgemm("N", "T", na, nb, np, 2._dp, achint(1, 1, 4), na, &
+                           !            bcint(1, 1, 4), nb, 1.0_dp, blocks(6)%block, SIZE(blocks(6)%block, 1)) ! zVz
 
                            ! + r_beta * Vnl * r_alpha
                            ! CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 2), na, &
@@ -795,18 +795,18 @@ CONTAINS
                            ! CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 4), na, &
                            !            bcint(1, 1, 4), nb, 1.0_dp, blocks(6)%block, SIZE(blocks(6)%block, 1))  ! zVz
 
-                           ! - r_alpha * r_beta * Vnl
-                           CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 5), na, &
+                           ! r_alpha * r_beta * Vnl
+                           CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 5), na, &
                                       bcint(1, 1, 1), nb, 1.0_dp, blocks(1)%block, SIZE(blocks(1)%block, 1)) ! xxV
-                           CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 6), na, &
+                           CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 6), na, &
                                       bcint(1, 1, 1), nb, 1.0_dp, blocks(2)%block, SIZE(blocks(2)%block, 1)) ! xyV
-                           CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 7), na, &
+                           CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 7), na, &
                                       bcint(1, 1, 1), nb, 1.0_dp, blocks(3)%block, SIZE(blocks(3)%block, 1)) ! xzV
-                           CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 8), na, &
+                           CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 8), na, &
                                       bcint(1, 1, 1), nb, 1.0_dp, blocks(4)%block, SIZE(blocks(4)%block, 1)) ! yyV
-                           CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 9), na, &
+                           CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 9), na, &
                                       bcint(1, 1, 1), nb, 1.0_dp, blocks(5)%block, SIZE(blocks(5)%block, 1)) ! yzV
-                           CALL dgemm("N", "T", na, nb, np, -1._dp, achint(1, 1, 10), na, &
+                           CALL dgemm("N", "T", na, nb, np, 1._dp, achint(1, 1, 10), na, &
                                       bcint(1, 1, 1), nb, 1.0_dp, blocks(6)%block, SIZE(blocks(6)%block, 1)) ! zzV
 
                            ! - Vnl * r_alpha * r_beta
