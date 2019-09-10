@@ -2074,7 +2074,7 @@ CONTAINS
         NULLIFY (matrix_vr)
         CALL dbcsr_allocate_matrix_set(matrix_vr, 6)
         CALL initialize_dbcsr_operator_matrix(qs_env, matrix_vr, dbcsr_type_no_symmetry)
-        CALL build_com_rrpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, qs_env)
+        CALL build_com_rrpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, qs_env, rcc)
       
         DO ind = 1, 3 
           DO idir = 1, 3
@@ -2478,9 +2478,9 @@ CONTAINS
                   (TRIM(rlab(i)), "=", rmom(i, 3)*debye, i=2, 4), "Total=", dd
             CASE (2)
                WRITE (unit_number, "(T3,A)") "Quadrupole moment [Debye*Angstrom]"
-               WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
+               WRITE (unit_number, "(T17,3(A,A,D22.12,9X))") &
                   (TRIM(rlab(i)), "=", rmom(i, 3)*debye/bohr, i=5, 7)
-               WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
+               WRITE (unit_number, "(T17,3(A,A,D22.12,9X))") &
                   (TRIM(rlab(i)), "=", rmom(i, 3)*debye/bohr, i=8, 10)
             CASE (3)
                WRITE (unit_number, "(T3,A)") "Octapole moment [Debye*Angstrom**2]"
@@ -2544,7 +2544,7 @@ CONTAINS
       IF (unit_number > 0) THEN
          dd = SQRT(SUM(momenta(1:3)**2))
          WRITE (unit_number, "(T3,A)") description
-         WRITE (unit_number, "(T5,3(A,A,F14.8,1X),T80,A,T86,F14.8)") &
+         WRITE (unit_number, "(T5,3(A,A,D22.12,1X),T80,A,T86,F14.8)") &
             (TRIM(rlab(i+1)), "=", momenta(i), i=1, 3), "Total=", dd
       ENDIF
 
@@ -2567,12 +2567,12 @@ CONTAINS
 
       IF (unit_number > 0) THEN
          WRITE (unit_number, "(T3,A)") description
-         WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
+         WRITE (unit_number, "(T17,3(A,A,D22.12,9X))") &
             (TRIM(rlab(i)), "=", momenta(i), i=1, 3)
-         WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
+         WRITE (unit_number, "(T17,3(A,A,D22.12,9X))") &
             (TRIM(rlab(i)), "=", momenta(i), i=4, 6)
          IF (SIZE(momenta) == 9) THEN
-            WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
+            WRITE (unit_number, "(T17,3(A,A,D22.12,9X))") &
                (TRIM(rlab(i)), "=", momenta(i), i=7, 9)
          ENDIF
 
