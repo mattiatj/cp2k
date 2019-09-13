@@ -2086,7 +2086,7 @@ CONTAINS
               CALL dbcsr_trace(mat_tmp_ao, trace)
               strace = strace + trace
             ENDDO
-            qupole_vel_nonloc((ind-1)*3 + idir) = qupole_vel((ind-1)*3 + idir) + strace
+            qupole_vel_nonloc((ind-1)*3 + idir) = qupole_vel((ind-1)*3 + idir) - strace
           ENDDO
         ENDDO
       ENDIF
@@ -2127,7 +2127,7 @@ CONTAINS
                 CALL dbcsr_trace(mat_tmp_ao, trace)
                 strace = strace + trace
               ENDDO
-              qupole_vel_im_nonloc((ind-1)*3 + idir) = qupole_vel_im((ind-1)*3 + idir) + strace
+              qupole_vel_im_nonloc((ind-1)*3 + idir) = qupole_vel_im((ind-1)*3 + idir) - strace
             ENDDO
           ENDDO
         ENDIF
