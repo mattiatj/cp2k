@@ -1951,8 +1951,7 @@ CONTAINS
       CHARACTER(LEN=8), ALLOCATABLE, DIMENSION(:)        :: rlab
       CHARACTER(LEN=default_string_length)               :: description, description_nonloc
       INTEGER                                            :: handle, ind, ispin, ix, iy, iz, nm, idir, &
-                                                            nmom, index_sym
-      ! LOGICAL                                            :: nodealloc, nodealloc_2
+                                                            nmom
       REAL(dp)                                           :: eps_ppnl, strace, trace, exp_s
       REAL(dp), ALLOCATABLE, DIMENSION(:)                :: qupole_vel, qupole_vel_im, qupole, qupole_vel_nonloc,&
                                                             qupole_vel_im_nonloc, qupole_nonloc
@@ -1968,7 +1967,6 @@ CONTAINS
       TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(cell_type), POINTER                           :: cell
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
-      ! TYPE(rt_moments_type), POINTER                     :: rtm
 
       CPASSERT(ASSOCIATED(qs_env))
       CALL timeset(routineN, handle)
@@ -1983,11 +1981,11 @@ CONTAINS
       ! nodealloc_2 = .FALSE.
       
       ALLOCATE (qupole_vel(9))
-      ALLOCATE (qupole_vel_nonloc(9))
+      ALLOCATE (qupole_vel_nonloc(6))
       ALLOCATE (qupole(6))
       ALLOCATE (qupole_nonloc(6))
       ALLOCATE (qupole_vel_im(9))
-      ALLOCATE (qupole_vel_im_nonloc(9))
+      ALLOCATE (qupole_vel_im_nonloc(6))
       ALLOCATE (rlab(6+1))
 
       qupole_vel = 0._dp
@@ -2076,18 +2074,15 @@ CONTAINS
         CALL initialize_dbcsr_operator_matrix(qs_env, matrix_vr, dbcsr_type_no_symmetry)
         CALL build_com_rrpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, qs_env, rcc)
       
-        DO ind = 1, 3 
-          DO idir = 1, 3
-            strace = 0._dp
-            CALL fold_indices_sym(ind, idir, index_sym)
-            DO ispin = 1, dft_control%nspins
-              CALL dbcsr_set(mat_tmp_ao, 0._dp)
-              CALL dbcsr_multiply("T", "N", 1._dp, rho_ao(ispin)%matrix, matrix_vr(index_sym)%matrix, 0._dp, mat_tmp_ao)
-              CALL dbcsr_trace(mat_tmp_ao, trace)
-              strace = strace + trace
-            ENDDO
-            qupole_vel_nonloc((ind-1)*3 + idir) = qupole_vel((ind-1)*3 + idir) - strace
+        DO idir = 1, 6
+          strace = 0._dp
+          DO ispin = 1, dft_control%nspins
+            CALL dbcsr_set(mat_tmp_ao, 0._dp)
+            CALL dbcsr_multiply("T", "N", 1._dp, rho_ao(ispin)%matrix, matrix_vr(idir)%matrix, 0._dp, mat_tmp_ao)
+            CALL dbcsr_trace(mat_tmp_ao, trace)
+            strace = strace + trace
           ENDDO
+          qupole_vel_nonloc(idir) = strace
         ENDDO
       ENDIF
 
@@ -2117,18 +2112,15 @@ CONTAINS
         ENDDO
 
         IF (com_nonloc) THEN
-          DO ind = 1, 3 
-            DO idir = 1, 3
-              strace = 0._dp
-              CALL fold_indices_sym(ind, idir, index_sym)
-              DO ispin = 1, dft_control%nspins
-                CALL dbcsr_set(mat_tmp_ao, 0._dp)
-                CALL dbcsr_multiply("T", "N", 1._dp, rho_ao_im(ispin)%matrix, matrix_vr(index_sym)%matrix, 0._dp, mat_tmp_ao)
-                CALL dbcsr_trace(mat_tmp_ao, trace)
-                strace = strace + trace
-              ENDDO
-              qupole_vel_im_nonloc((ind-1)*3 + idir) = qupole_vel_im((ind-1)*3 + idir) - strace
+          DO idir = 1, 6
+            strace = 0._dp
+            DO ispin = 1, dft_control%nspins
+              CALL dbcsr_set(mat_tmp_ao, 0._dp)
+              CALL dbcsr_multiply("T", "N", 1._dp, rho_ao_im(ispin)%matrix, matrix_vr(idir)%matrix, 0._dp, mat_tmp_ao)
+              CALL dbcsr_trace(mat_tmp_ao, trace)
+              strace = strace + trace
             ENDDO
+            qupole_vel_im_nonloc(idir) =  strace
           ENDDO
         ENDIF
       ENDIF
@@ -2140,15 +2132,14 @@ CONTAINS
       qupole(5) = qupole_vel(6) + qupole_vel_im(6) + qupole_vel(8) + qupole_vel_im(8)
       qupole(6) = 2*(qupole_vel(9) + qupole_vel_im(9) ) - exp_s
 
-      qupole_nonloc(1) = 2 * (qupole_vel_nonloc(1) + qupole_vel_im_nonloc(1)) - exp_s
-      qupole_nonloc(2) = qupole_vel_nonloc(2) + qupole_vel_im_nonloc(2) + qupole_vel_nonloc(4) + qupole_vel_im_nonloc(4)
-      qupole_nonloc(3) = qupole_vel_nonloc(3) + qupole_vel_im_nonloc(3) + qupole_vel_nonloc(7) + qupole_vel_im_nonloc(7)
-      qupole_nonloc(4) = 2 * (qupole_vel_nonloc(5) + qupole_vel_im_nonloc(5)) - exp_s
-      qupole_nonloc(5) = qupole_vel_nonloc(6) + qupole_vel_im_nonloc(6) + qupole_vel_nonloc(8) + qupole_vel_im_nonloc(8)
-      qupole_nonloc(6) = 2*(qupole_vel_nonloc(9) + qupole_vel_im_nonloc(9) ) - exp_s
-
       qupole(:) = -qupole(:)
-      qupole_nonloc(:) = -qupole_nonloc(:)
+
+      IF (com_nonloc) THEN
+        DO idir = 1, 6
+          qupole_nonloc(idir) = qupole(idir) - qupole_vel_nonloc(idir) - qupole_vel_im_nonloc(idir)
+          qupole_nonloc(:) = -qupole_nonloc(:)
+        ENDDO
+      ENDIF
 
       CALL dbcsr_deallocate_matrix_set(moments_ao)
       CALL dbcsr_deallocate_matrix(mat_tmp_ao)
@@ -2579,52 +2570,6 @@ CONTAINS
       ENDIF
 
    END SUBROUTINE print_second_moments
-
-
-! **************************************************************************************************
-!> \brief turn two Cartesian indices into one for symmetric tensors (e.g. 2,1 ==> 2; 3,2 ==> 5)
-!> \param ind1 ...
-!> \param ind2 ...
-!> \param result ...
-! **************************************************************************************************
-   SUBROUTINE fold_indices_sym(ind1, ind2, result)
-    INTEGER, INTENT(IN)                                 :: ind1, ind2
-    INTEGER, INTENT(OUT)                                :: result
-
-    IF (ind1 == 1 .AND. ind2 == 1) result = 1
-    IF (ind1 == 1 .AND. ind2 == 2) result = 2
-    IF (ind1 == 1 .AND. ind2 == 3) result = 3
-    IF (ind1 == 2 .AND. ind2 == 1) result = 2
-    IF (ind1 == 2 .AND. ind2 == 2) result = 4
-    IF (ind1 == 2 .AND. ind2 == 3) result = 5
-    IF (ind1 == 3 .AND. ind2 == 1) result = 3
-    IF (ind1 == 3 .AND. ind2 == 2) result = 5
-    IF (ind1 == 3 .AND. ind2 == 3) result = 6
-
-   END SUBROUTINE fold_indices_sym
-
-
-! **************************************************************************************************
-!> \brief turn two Cartesian indices into one for non symmetric tensors (e.g. 2,1 ==> 4; 3,2 ==> 8)
-!> \param ind1 ...
-!> \param ind2 ...
-!> \param result ...
-! **************************************************************************************************
-   SUBROUTINE fold_indices(ind1, ind2, result)
-    INTEGER, INTENT(IN)                                 :: ind1, ind2
-    INTEGER, INTENT(OUT)                                :: result
-
-    IF (ind1 == 1 .AND. ind2 == 1) result = 1
-    IF (ind1 == 1 .AND. ind2 == 2) result = 2
-    IF (ind1 == 1 .AND. ind2 == 3) result = 3
-    IF (ind1 == 2 .AND. ind2 == 1) result = 4
-    IF (ind1 == 2 .AND. ind2 == 2) result = 5
-    IF (ind1 == 2 .AND. ind2 == 3) result = 6
-    IF (ind1 == 3 .AND. ind2 == 1) result = 7
-    IF (ind1 == 3 .AND. ind2 == 2) result = 8
-    IF (ind1 == 3 .AND. ind2 == 3) result = 9
-
-   END SUBROUTINE fold_indices
 
 ! **************************************************************************************************
 !> \brief ...
