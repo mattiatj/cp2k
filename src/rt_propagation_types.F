@@ -33,6 +33,7 @@ MODULE rt_propagation_types
                                               cp_fm_struct_release,&
                                               cp_fm_struct_type
    USE cp_fm_types,                     ONLY: cp_fm_create,&
+                                              cp_fm_type,&
                                               cp_fm_p_type,&
                                               cp_fm_release
    USE cp_fm_vect,                      ONLY: cp_fm_vect_dealloc
@@ -83,6 +84,8 @@ MODULE rt_propagation_types
       TYPE(dbcsr_type), POINTER                 :: S_half
       TYPE(dbcsr_type), POINTER                 :: S_minus_half
       TYPE(dbcsr_type), POINTER                 :: B_mat
+      TYPE(dbcsr_type), POINTER                 :: gs_evecs
+      TYPE(dbcsr_type), POINTER                 :: gs_evecs_inv
       TYPE(dbcsr_p_type), POINTER, DIMENSION(:)  :: C_mat
       TYPE(dbcsr_p_type), POINTER, DIMENSION(:)  :: S_der
       TYPE(dbcsr_p_type), POINTER, DIMENSION(:)  :: SinvH
@@ -113,6 +116,8 @@ MODULE rt_propagation_types
       REAL(KIND=dp)                               :: lanzcos_threshold
       INTEGER                                     :: newton_schulz_order
       LOGICAL                                     :: linear_scaling
+      TYPE(cp_fm_type), POINTER                 :: gs_evecs_fm
+      TYPE(cp_fm_type), POINTER                 :: gs_evecs_inv_fm
    END TYPE rt_prop_type
 
 ! *** Public data types ***
@@ -200,23 +205,23 @@ CONTAINS
          END IF
          DO i = 1, nspin
             DO j = 1, 2
-               NULLIFY (rtp%mos%old(2*(i - 1) + j)%matrix)
-               NULLIFY (rtp%mos%new(2*(i - 1) + j)%matrix)
-               NULLIFY (rtp%mos%next(2*(i - 1) + j)%matrix)
-               CALL cp_fm_create(rtp%mos%old(2*(i - 1) + j)%matrix, &
+               NULLIFY (rtp%mos%old(2*(i-1)+j)%matrix)
+               NULLIFY (rtp%mos%new(2*(i-1)+j)%matrix)
+               NULLIFY (rtp%mos%next(2*(i-1)+j)%matrix)
+               CALL cp_fm_create(rtp%mos%old(2*(i-1)+j)%matrix, &
                                  matrix_struct=mos(i)%mo_set%mo_coeff%matrix_struct, &
-                                 name="mos_old"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
-               CALL cp_fm_create(rtp%mos%new(2*(i - 1) + j)%matrix, &
+                                 name="mos_old"//TRIM(ADJUSTL(cp_to_string(2*(i-1)+j))))
+               CALL cp_fm_create(rtp%mos%new(2*(i-1)+j)%matrix, &
                                  matrix_struct=mos(i)%mo_set%mo_coeff%matrix_struct, &
-                                 name="mos_new"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
-               CALL cp_fm_create(rtp%mos%next(2*(i - 1) + j)%matrix, &
+                                 name="mos_new"//TRIM(ADJUSTL(cp_to_string(2*(i-1)+j))))
+               CALL cp_fm_create(rtp%mos%next(2*(i-1)+j)%matrix, &
                                  matrix_struct=mos(i)%mo_set%mo_coeff%matrix_struct, &
-                                 name="mos_next"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
+                                 name="mos_next"//TRIM(ADJUSTL(cp_to_string(2*(i-1)+j))))
                IF (dft_control%do_admm) THEN
-                  NULLIFY (rtp%mos%admm(2*(i - 1) + j)%matrix)
-                  CALL cp_fm_create(rtp%mos%admm(2*(i - 1) + j)%matrix, &
+                  NULLIFY (rtp%mos%admm(2*(i-1)+j)%matrix)
+                  CALL cp_fm_create(rtp%mos%admm(2*(i-1)+j)%matrix, &
                                     matrix_struct=mos_aux(i)%mo_set%mo_coeff%matrix_struct, &
-                                    name="mos_admm"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
+                                    name="mos_admm"//TRIM(ADJUSTL(cp_to_string(2*(i-1)+j))))
                END IF
             END DO
          END DO
@@ -285,6 +290,17 @@ CONTAINS
       rtp%do_hfx = .FALSE.
       rtp%track_imag_density = .FALSE.
 
+      NULLIFY(rtp%gs_evecs, rtp%gs_evecs_inv)
+      ALLOCATE(rtp%gs_evecs, rtp%gs_evecs_inv)
+      CALL dbcsr_create(rtp%gs_evecs, template = template, matrix_type = "N")
+      CALL dbcsr_create(rtp%gs_evecs_inv, template = template, matrix_type = "N")
+
+      NULLIFY(rtp%gs_evecs_fm, rtp%gs_evecs_inv_fm)
+      IF (.NOT. rtp%linear_scaling) THEN
+        CALL cp_fm_create(rtp%gs_evecs_fm, matrix_struct = rtp%ao_ao_fmstruct, name = "gs evecs fm")
+        CALL cp_fm_create(rtp%gs_evecs_inv_fm, matrix_struct = rtp%ao_ao_fmstruct, name = "gs evecs inv fm")
+      ENDIF
+
    END SUBROUTINE rt_prop_create
 
 ! **************************************************************************************************
@@ -317,16 +333,20 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE get_rtp(rtp, exp_H_old, exp_H_new, H_last_iter, rho_old, rho_next, rho_new, mos, mos_new, mos_old, mos_next, &
                       S_inv, S_half, S_minus_half, B_mat, C_mat, propagator_matrix, mixing, mixing_factor, &
-                      S_der, dt, nsteps, SinvH, SinvB, admm_mos)
+                      S_der, dt, nsteps, SinvH, SinvB, admm_mos, gs_evecs, gs_evecs_inv, gs_evecs_fm, gs_evecs_inv_fm,&
+                      ao_ao_fmstruct)
 
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: exp_H_old, exp_H_new, H_last_iter, &
                                                             rho_old, rho_next, rho_new
       TYPE(rtp_mos_type), OPTIONAL, POINTER              :: mos
+      TYPE(cp_fm_type), POINTER, OPTIONAL                :: gs_evecs_fm, gs_evecs_inv_fm
       TYPE(cp_fm_p_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: mos_new, mos_old, mos_next
-      TYPE(dbcsr_type), OPTIONAL, POINTER                :: S_inv, S_half, S_minus_half, B_mat
+      TYPE(cp_fm_struct_type), POINTER, OPTIONAL         :: ao_ao_fmstruct
+      TYPE(dbcsr_type), OPTIONAL, POINTER                :: S_inv, S_half, S_minus_half, B_mat,&
+                                                            gs_evecs, gs_evecs_inv
       TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: C_mat, propagator_matrix
       LOGICAL, OPTIONAL                                  :: mixing
@@ -368,6 +388,13 @@ CONTAINS
       IF (PRESENT(mixing)) mixing = rtp%mixing
       IF (PRESENT(mixing_factor)) mixing_factor = rtp%mixing_factor
       IF (PRESENT(nsteps)) nsteps = rtp%nsteps
+
+      IF (PRESENT(gs_evecs)) gs_evecs => rtp%gs_evecs
+      IF (PRESENT(gs_evecs_inv)) gs_evecs_inv => rtp%gs_evecs_inv
+      IF (PRESENT(gs_evecs_fm)) gs_evecs_fm => rtp%gs_evecs_fm
+      IF (PRESENT(gs_evecs_inv_fm)) gs_evecs_inv_fm => rtp%gs_evecs_inv_fm
+
+      IF (PRESENT(ao_ao_fmstruct)) ao_ao_fmstruct => rtp%ao_ao_fmstruct
 
    END SUBROUTINE get_rtp
 
@@ -419,6 +446,15 @@ CONTAINS
          CALL rtp_history_release(rtp)
       DEALLOCATE (rtp%orders)
       IF (.NOT. rtp%linear_scaling) CALL cp_fm_struct_release(rtp%ao_ao_fmstruct)
+
+      CALL dbcsr_deallocate_matrix(rtp%gs_evecs)
+      CALL dbcsr_deallocate_matrix(rtp%gs_evecs_inv)
+
+      IF (.NOT. rtp%linear_scaling) THEN
+        CALL cp_fm_release(rtp%gs_evecs_fm)
+        CALL cp_fm_release(rtp%gs_evecs_inv_fm)
+      ENDIF
+
    END SUBROUTINE rt_prop_release
 
 ! **************************************************************************************************

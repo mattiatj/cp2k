@@ -1915,6 +1915,11 @@ CONTAINS
                           unit_str='bohr')
       CALL section_add_keyword(print_key, keyword)
       CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="PAIR_DIPOLE_MOMENTS", &
+                          description="If the printkey is activated controls the printing of pair dipole moments", &
+                          default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
       CALL section_add_subsection(section, print_key)
       CALL section_release(print_key)
 
