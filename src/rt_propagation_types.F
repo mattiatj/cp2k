@@ -33,7 +33,6 @@ MODULE rt_propagation_types
                                               cp_fm_struct_release,&
                                               cp_fm_struct_type
    USE cp_fm_types,                     ONLY: cp_fm_create,&
-                                              cp_fm_type,&
                                               cp_fm_p_type,&
                                               cp_fm_release,&
                                               cp_fm_type
@@ -206,23 +205,23 @@ CONTAINS
          END IF
          DO i = 1, nspin
             DO j = 1, 2
-               NULLIFY (rtp%mos%old(2*(i-1)+j)%matrix)
-               NULLIFY (rtp%mos%new(2*(i-1)+j)%matrix)
-               NULLIFY (rtp%mos%next(2*(i-1)+j)%matrix)
-               CALL cp_fm_create(rtp%mos%old(2*(i-1)+j)%matrix, &
+               NULLIFY (rtp%mos%old(2*(i - 1) + j)%matrix)
+               NULLIFY (rtp%mos%new(2*(i - 1) + j)%matrix)
+               NULLIFY (rtp%mos%next(2*(i - 1) + j)%matrix)
+               CALL cp_fm_create(rtp%mos%old(2*(i - 1) + j)%matrix, &
                                  matrix_struct=mos(i)%mo_set%mo_coeff%matrix_struct, &
-                                 name="mos_old"//TRIM(ADJUSTL(cp_to_string(2*(i-1)+j))))
-               CALL cp_fm_create(rtp%mos%new(2*(i-1)+j)%matrix, &
+                                 name="mos_old"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
+               CALL cp_fm_create(rtp%mos%new(2*(i - 1) + j)%matrix, &
                                  matrix_struct=mos(i)%mo_set%mo_coeff%matrix_struct, &
-                                 name="mos_new"//TRIM(ADJUSTL(cp_to_string(2*(i-1)+j))))
-               CALL cp_fm_create(rtp%mos%next(2*(i-1)+j)%matrix, &
+                                 name="mos_new"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
+               CALL cp_fm_create(rtp%mos%next(2*(i - 1) + j)%matrix, &
                                  matrix_struct=mos(i)%mo_set%mo_coeff%matrix_struct, &
-                                 name="mos_next"//TRIM(ADJUSTL(cp_to_string(2*(i-1)+j))))
+                                 name="mos_next"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
                IF (dft_control%do_admm) THEN
-                  NULLIFY (rtp%mos%admm(2*(i-1)+j)%matrix)
-                  CALL cp_fm_create(rtp%mos%admm(2*(i-1)+j)%matrix, &
+                  NULLIFY (rtp%mos%admm(2*(i - 1) + j)%matrix)
+                  CALL cp_fm_create(rtp%mos%admm(2*(i - 1) + j)%matrix, &
                                     matrix_struct=mos_aux(i)%mo_set%mo_coeff%matrix_struct, &
-                                    name="mos_admm"//TRIM(ADJUSTL(cp_to_string(2*(i-1)+j))))
+                                    name="mos_admm"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
                END IF
             END DO
          END DO
@@ -343,12 +342,9 @@ CONTAINS
          POINTER                                         :: exp_H_old, exp_H_new, H_last_iter, &
                                                             rho_old, rho_next, rho_new
       TYPE(rtp_mos_type), OPTIONAL, POINTER              :: mos
-      TYPE(cp_fm_type), POINTER, OPTIONAL                :: gs_evecs_fm, gs_evecs_inv_fm
       TYPE(cp_fm_p_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: mos_new, mos_old, mos_next
-      TYPE(cp_fm_struct_type), POINTER, OPTIONAL         :: ao_ao_fmstruct
-      TYPE(dbcsr_type), OPTIONAL, POINTER                :: S_inv, S_half, S_minus_half, B_mat,&
-                                                            gs_evecs, gs_evecs_inv
+      TYPE(dbcsr_type), OPTIONAL, POINTER                :: S_inv, S_half, S_minus_half, B_mat
       TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: C_mat, propagator_matrix
       LOGICAL, OPTIONAL                                  :: mixing
