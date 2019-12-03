@@ -52,9 +52,9 @@ MODULE qs_moments
    USE cp_result_types,                 ONLY: cp_result_type
    USE dbcsr_api,                       ONLY: &
         dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_desymmetrize, &
-        dbcsr_distribution_type, dbcsr_dot, dbcsr_get_block_p, dbcsr_init_p, dbcsr_multiply,&
-        dbcsr_p_type, dbcsr_set, dbcsr_trace, dbcsr_type, dbcsr_type_antisymmetric,&
-        dbcsr_type_no_symmetry, dbcsr_type_symmetric, dbcsr_print
+        dbcsr_distribution_type, dbcsr_dot, dbcsr_get_block_p, dbcsr_init_p, dbcsr_multiply, &
+        dbcsr_p_type, dbcsr_set, dbcsr_trace, dbcsr_type, dbcsr_type_antisymmetric, &
+        dbcsr_type_no_symmetry, dbcsr_type_symmetric
    USE distribution_1d_types,           ONLY: distribution_1d_type
    USE input_section_types,             ONLY: section_get_ival,&
                                               section_vals_type,&
@@ -89,15 +89,14 @@ MODULE qs_moments
                                               neighbor_list_iterator_p_type,&
                                               neighbor_list_iterator_release,&
                                               neighbor_list_set_p_type
-   USE qs_operators_ao,                 ONLY: build_lin_mom_matrix, &
-                                              build_diffop_matrix, &
-                                              rRc_xyz_der_ao
+   USE qs_operators_ao,                 ONLY: build_diffop_matrix,&
+                                              build_lin_mom_matrix
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_type
-   USE rt_propagation_types,            ONLY: get_rtp,&
-                                              rt_prop_type,&
+   USE rt_propagation_types,            ONLY: get_rtm,&
+                                              get_rtp,&
                                               rt_moments_type,&
-                                              get_rtm
+                                              rt_prop_type
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -165,7 +164,7 @@ CONTAINS
 
       NULLIFY (qs_kind_set, cell, particle_set, sab_orb)
 
-      nm = (6+11*nmoments+6*nmoments**2+nmoments**3)/6-1
+      nm = (6 + 11*nmoments + 6*nmoments**2 + nmoments**3)/6 - 1
       CPASSERT(SIZE(moments) >= nm)
 
       NULLIFY (qs_kind_set, particle_set, sab_orb, cell)
@@ -259,7 +258,7 @@ CONTAINS
 
          ! fold atomic position back into unit cell
          IF (PRESENT(ref_points)) THEN
-            rc(:) = 0.5_dp*(ref_points(:, iatom)+ref_points(:, jatom))
+            rc(:) = 0.5_dp*(ref_points(:, iatom) + ref_points(:, jatom))
          ELSE IF (PRESENT(ref_point)) THEN
             rc(:) = ref_point(:)
          ELSE
@@ -267,13 +266,13 @@ CONTAINS
          END IF
          ! using PBC here might screw a molecule that fits the box (but e.g. hasn't been shifted by center_molecule)
          ! by folding around the center, such screwing can be avoided for a proper choice of center.
-         ra(:) = pbc(particle_set(iatom)%r(:)-rc, cell)+rc
-         rb(:) = pbc(particle_set(jatom)%r(:)-rc, cell)+rc
+         ra(:) = pbc(particle_set(iatom)%r(:) - rc, cell) + rc
+         rb(:) = pbc(particle_set(jatom)%r(:) - rc, cell) + rc
          ! we dont use PBC at this point
-         rab(:) = ra(:)-rb(:)
-         rac(:) = ra(:)-rc(:)
-         rbc(:) = rb(:)-rc(:)
-         rab2 = rab(1)*rab(1)+rab(2)*rab(2)+rab(3)*rab(3)
+         rab(:) = ra(:) - rb(:)
+         rac(:) = ra(:) - rc(:)
+         rbc(:) = rb(:) - rc(:)
+         rab2 = rab(1)*rab(1) + rab(2)*rab(2) + rab(3)*rab(3)
          dab = SQRT(rab2)
 
          DO iset = 1, nseta
@@ -283,7 +282,7 @@ CONTAINS
 
             DO jset = 1, nsetb
 
-               IF (set_radius_a(iset)+set_radius_b(jset) < dab) CYCLE
+               IF (set_radius_a(iset) + set_radius_b(jset) < dab) CYCLE
 
                ncob = npgfb(jset)*ncoset(lb_max(jset))
                sgfb = first_sgfb(1, jset)
@@ -482,7 +481,7 @@ CONTAINS
 
          ! fold atomic position back into unit cell
          IF (PRESENT(ref_points)) THEN
-            rc(:) = 0.5_dp*(ref_points(:, iatom)+ref_points(:, jatom))
+            rc(:) = 0.5_dp*(ref_points(:, iatom) + ref_points(:, jatom))
          ELSE IF (PRESENT(ref_point)) THEN
             rc(:) = ref_point(:)
          ELSE
@@ -490,13 +489,13 @@ CONTAINS
          END IF
          ! using PBC here might screw a molecule that fits the box (but e.g. hasn't been shifted by center_molecule)
          ! by folding around the center, such screwing can be avoided for a proper choice of center.
-         ra(:) = pbc(particle_set(iatom)%r(:)-rc, cell)+rc
-         rb(:) = pbc(particle_set(jatom)%r(:)-rc, cell)+rc
+         ra(:) = pbc(particle_set(iatom)%r(:) - rc, cell) + rc
+         rb(:) = pbc(particle_set(jatom)%r(:) - rc, cell) + rc
          ! we dont use PBC at this point
-         rab(:) = ra(:)-rb(:)
-         rac(:) = ra(:)-rc(:)
-         rbc(:) = rb(:)-rc(:)
-         rab2 = rab(1)*rab(1)+rab(2)*rab(2)+rab(3)*rab(3)
+         rab(:) = ra(:) - rb(:)
+         rac(:) = ra(:) - rc(:)
+         rbc(:) = rb(:) - rc(:)
+         rab2 = rab(1)*rab(1) + rab(2)*rab(2) + rab(3)*rab(3)
          dab = SQRT(rab2)
 
          DO iset = 1, nseta
@@ -506,7 +505,7 @@ CONTAINS
 
             DO jset = 1, nsetb
 
-               IF (set_radius_a(iset)+set_radius_b(jset) < dab) CYCLE
+               IF (set_radius_a(iset) + set_radius_b(jset) < dab) CYCLE
 
                ncob = npgfb(jset)*ncoset(lb_max(jset))
                sgfb = first_sgfb(1, jset)
@@ -694,8 +693,8 @@ CONTAINS
          IF (ASSOCIATED(cblock) .AND. ASSOCIATED(sblock)) THEN
 
             ra(:) = pbc(particle_set(iatom)%r(:), cell)
-            rb(:) = ra+rab
-            dab = SQRT(rab(1)*rab(1)+rab(2)*rab(2)+rab(3)*rab(3))
+            rb(:) = ra + rab
+            dab = SQRT(rab(1)*rab(1) + rab(2)*rab(2) + rab(3)*rab(3))
 
             DO iset = 1, nseta
 
@@ -704,7 +703,7 @@ CONTAINS
 
                DO jset = 1, nsetb
 
-                  IF (set_radius_a(iset)+set_radius_b(jset) < dab) CYCLE
+                  IF (set_radius_a(iset) + set_radius_b(jset) < dab) CYCLE
 
                   ncob = npgfb(jset)*ncoset(lb_max(jset))
                   sgfb = first_sgfb(1, jset)
@@ -904,8 +903,8 @@ CONTAINS
          CPASSERT(found)
 
          ra(:) = pbc(particle_set(iatom)%r(:), cell)
-         rb(:) = ra+rab
-         dab = SQRT(rab(1)*rab(1)+rab(2)*rab(2)+rab(3)*rab(3))
+         rb(:) = ra + rab
+         dab = SQRT(rab(1)*rab(1) + rab(2)*rab(2) + rab(3)*rab(3))
 
          DO iset = 1, nseta
 
@@ -914,7 +913,7 @@ CONTAINS
 
             DO jset = 1, nsetb
 
-               IF (set_radius_a(iset)+set_radius_b(jset) < dab) CYCLE
+               IF (set_radius_a(iset) + set_radius_b(jset) < dab) CYCLE
 
                ncob = npgfb(jset)*ncoset(lb_max(jset))
                sgfb = first_sgfb(1, jset)
@@ -972,7 +971,7 @@ CONTAINS
       INTEGER                                            :: handle, i, ia, idim, ikind, ispin, ix, &
                                                             iy, iz, j, k, l, nao, nm, nmo, nmom, &
                                                             nmotot, tmp_dim
-      LOGICAL                                            :: floating, ghost, uniform, nodealloc
+      LOGICAL                                            :: floating, ghost, nodealloc, uniform
       REAL(dp)                                           :: charge, ci(3), cij(3, 3), dd, occ, trace
       REAL(dp), ALLOCATABLE, DIMENSION(:)                :: mmom
       REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: rmom
@@ -986,9 +985,8 @@ CONTAINS
       TYPE(cp_fm_type), POINTER                          :: mo_coeff
       TYPE(cp_para_env_type), POINTER                    :: para_env
       TYPE(cp_result_type), POINTER                      :: results
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, rho_ao
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: cosmat_rtp, matrix_s, rho_ao, sinmat_rtp
       TYPE(dbcsr_type), POINTER                          :: cosmat, sinmat
-      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)          :: cosmat_rtp, sinmat_rtp
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(distribution_1d_type), POINTER                :: local_particles
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
@@ -1010,12 +1008,12 @@ CONTAINS
       ! restrict maximum moment available
       nmom = MIN(nmoments, 2)
 
-      nm = (6+11*nmom+6*nmom**2+nmom**3)/6-1
+      nm = (6 + 11*nmom + 6*nmom**2 + nmom**3)/6 - 1
       ! rmom(:,1)=electronic
       ! rmom(:,2)=nuclear
       ! rmom(:,1)=total
-      ALLOCATE (rmom(nm+1, 3))
-      ALLOCATE (rlab(nm+1))
+      ALLOCATE (rmom(nm + 1, 3))
+      ALLOCATE (rlab(nm + 1))
       rmom = 0.0_dp
       rlab = ""
       IF (magnetic) THEN
@@ -1055,7 +1053,7 @@ CONTAINS
       DO ispin = 1, dft_control%nspins
          NULLIFY (tmp_fm_struct, mo_coeff)
          CALL get_mo_set(mo_set=mos(ispin)%mo_set, mo_coeff=mo_coeff, nao=nao, nmo=nmo)
-         nmotot = nmotot+nmo
+         nmotot = nmotot + nmo
          CALL cp_fm_create(opvec(ispin)%matrix, mo_coeff%matrix_struct)
          CALL cp_fm_struct_create(tmp_fm_struct, nrow_global=nmo, &
                                   ncol_global=nmo, para_env=para_env, context=mo_coeff%matrix_struct%context)
@@ -1081,10 +1079,10 @@ CONTAINS
 
       ! label
       DO l = 1, nm
-         ix = indco(1, l+1)
-         iy = indco(2, l+1)
-         iz = indco(3, l+1)
-         CALL set_label(rlab(l+1), ix, iy, iz)
+         ix = indco(1, l + 1)
+         iy = indco(2, l + 1)
+         iz = indco(3, l + 1)
+         CALL set_label(rlab(l + 1), ix, iy, iz)
       END DO
 
       ! nuclear contribution
@@ -1093,7 +1091,7 @@ CONTAINS
          CALL get_atomic_kind(atomic_kind, kind_number=ikind)
          CALL get_qs_kind(qs_kind_set(ikind), core_charge=charge, ghost=ghost, floating=floating)
          IF (.NOT. ghost .AND. .NOT. floating) THEN
-            rmom(1, 2) = rmom(1, 2)-charge
+            rmom(1, 2) = rmom(1, 2) - charge
          ENDIF
       END DO
       ria = twopi*MATMUL(cell%h_inv, rcc)
@@ -1140,7 +1138,7 @@ CONTAINS
                ria = pbc(ria, cell)
                DO i = 1, 3
                   DO j = i, 3
-                     kvec(:) = twopi*(cell%h_inv(i, :)+cell%h_inv(j, :))
+                     kvec(:) = twopi*(cell%h_inv(i, :) + cell%h_inv(j, :))
                      dd = SUM(kvec(:)*ria(:))
                      zdeta = CMPLX(COS(dd), SIN(dd), KIND=dp)**charge
                      zij(i, j) = zij(i, j)*zdeta
@@ -1158,15 +1156,15 @@ CONTAINS
             cij = 0.5_dp*cij/twopi/twopi
             cij = MATMUL(MATMUL(cell%hmat, cij), TRANSPOSE(cell%hmat))
             DO k = 4, 9
-               ix = indco(1, k+1)
-               iy = indco(2, k+1)
-               iz = indco(3, k+1)
+               ix = indco(1, k + 1)
+               iy = indco(2, k + 1)
+               iz = indco(3, k + 1)
                IF (ix == 0) THEN
-                  rmom(k+1, 2) = cij(iy, iz)
+                  rmom(k + 1, 2) = cij(iy, iz)
                ELSE IF (iy == 0) THEN
-                  rmom(k+1, 2) = cij(ix, iz)
+                  rmom(k + 1, 2) = cij(ix, iz)
                ELSE IF (iz == 0) THEN
-                  rmom(k+1, 2) = cij(ix, iy)
+                  rmom(k + 1, 2) = cij(ix, iy)
                END IF
             END DO
          CASE (3)
@@ -1189,7 +1187,7 @@ CONTAINS
       trace = 0.0_dp
       DO ispin = 1, dft_control%nspins
          CALL dbcsr_dot(rho_ao(ispin)%matrix, matrix_s(1)%matrix, trace)
-         rmom(1, 1) = rmom(1, 1)+trace
+         rmom(1, 1) = rmom(1, 1) + trace
       END DO
 
       zi = 0._dp
@@ -1202,13 +1200,13 @@ CONTAINS
          CASE (1)
             ! Dipole
             IF (qs_env%run_rtp) THEN
-                IF (ASSOCIATED(qs_env%rtp%rtm)) THEN
+               IF (ASSOCIATED(qs_env%rtp%rtm)) THEN
                   CALL dbcsr_deallocate_matrix(cosmat)
                   CALL dbcsr_deallocate_matrix(sinmat)
                   nodealloc = .TRUE.
-                  CALL get_rtm(qs_env%rtp%rtm, sinmat = sinmat_rtp)
-                  CALL get_rtm(qs_env%rtp%rtm, cosmat = cosmat_rtp)
-                ENDIF
+                  CALL get_rtm(qs_env%rtp%rtm, sinmat=sinmat_rtp)
+                  CALL get_rtm(qs_env%rtp%rtm, cosmat=cosmat_rtp)
+               ENDIF
             ENDIF
             DO i = 1, 3
                kvec(:) = twopi*cell%h_inv(i, :)
@@ -1216,12 +1214,12 @@ CONTAINS
                   CALL get_qs_env(qs_env, rtp=rtp)
                   CALL get_rtp(rtp, mos_new=mos_new)
                   IF (ASSOCIATED(qs_env%rtp%rtm)) THEN
-                    NULLIFY(cosmat, sinmat)
-                    ALLOCATE(cosmat, sinmat)
-                    cosmat => cosmat_rtp(i)%matrix
-                    sinmat => sinmat_rtp(i)%matrix
+                     NULLIFY (cosmat, sinmat)
+                     ALLOCATE (cosmat, sinmat)
+                     cosmat => cosmat_rtp(i)%matrix
+                     sinmat => sinmat_rtp(i)%matrix
                   ELSE
-                    CALL build_berry_moment_matrix(qs_env, cosmat, sinmat, kvec)
+                     CALL build_berry_moment_matrix(qs_env, cosmat, sinmat, kvec)
                   ENDIF
                   CALL op_orbbas_rtp(cosmat, sinmat, mos, op_fm_set, mos_new)
                ELSE
@@ -1250,7 +1248,7 @@ CONTAINS
             CPABORT("Berry phase moments bigger than 1 not implemented")
             DO i = 1, 3
                DO j = i, 3
-                  kvec(:) = twopi*(cell%h_inv(i, :)+cell%h_inv(j, :))
+                  kvec(:) = twopi*(cell%h_inv(i, :) + cell%h_inv(j, :))
                   CALL build_berry_moment_matrix(qs_env, cosmat, sinmat, kvec)
                   IF (qs_env%run_rtp) THEN
                      CALL get_qs_env(qs_env, rtp=rtp)
@@ -1293,8 +1291,8 @@ CONTAINS
             ! Dipole (apply periodic (2 Pi) boundary conditions)
             ci = AIMAG(LOG(zi))
             DO i = 1, 3
-               IF (qq(i)+ci(i) > pi) ci(i) = ci(i)-twopi
-               IF (qq(i)+ci(i) < -pi) ci(i) = ci(i)+twopi
+               IF (qq(i) + ci(i) > pi) ci(i) = ci(i) - twopi
+               IF (qq(i) + ci(i) < -pi) ci(i) = ci(i) + twopi
             END DO
             rmom(2:4, 1) = MATMUL(cell%hmat, ci)/twopi
          CASE (2)
@@ -1309,15 +1307,15 @@ CONTAINS
             cij = 0.5_dp*cij/twopi/twopi
             cij = MATMUL(MATMUL(cell%hmat, cij), TRANSPOSE(cell%hmat))
             DO k = 4, 9
-               ix = indco(1, k+1)
-               iy = indco(2, k+1)
-               iz = indco(3, k+1)
+               ix = indco(1, k + 1)
+               iy = indco(2, k + 1)
+               iz = indco(3, k + 1)
                IF (ix == 0) THEN
-                  rmom(k+1, 1) = cij(iy, iz)
+                  rmom(k + 1, 1) = cij(iy, iz)
                ELSE IF (iy == 0) THEN
-                  rmom(k+1, 1) = cij(ix, iz)
+                  rmom(k + 1, 1) = cij(ix, iz)
                ELSE IF (iz == 0) THEN
-                  rmom(k+1, 1) = cij(ix, iy)
+                  rmom(k + 1, 1) = cij(ix, iy)
                END IF
             END DO
          CASE (3)
@@ -1331,7 +1329,7 @@ CONTAINS
          END SELECT
       END DO
 
-      rmom(:, 3) = rmom(:, 1)+rmom(:, 2)
+      rmom(:, 3) = rmom(:, 1) + rmom(:, 2)
       description = "[DIPOLE]"
       CALL cp_results_erase(results=results, description=description)
       CALL put_results(results=results, description=description, &
@@ -1350,9 +1348,9 @@ CONTAINS
       END IF
 
       IF (.NOT. nodealloc) THEN
-        CALL dbcsr_deallocate_matrix(cosmat)
-        CALL dbcsr_deallocate_matrix(sinmat)
-      ENDIF        
+         CALL dbcsr_deallocate_matrix(cosmat)
+         CALL dbcsr_deallocate_matrix(sinmat)
+      ENDIF
 
       DO ispin = 1, dft_control%nspins
          CALL cp_fm_release(opvec(ispin)%matrix)
@@ -1437,16 +1435,16 @@ CONTAINS
 
          CALL cp_fm_set_all(work, 0.0_dp, 0.0_dp)
          DO icol = 1, lcol
-            work%local_data(:, icol) = mos_new(2*i-1)%matrix%local_data(:, icol)
-            work%local_data(:, icol+lcol) = mos_new(2*i)%matrix%local_data(:, icol)
+            work%local_data(:, icol) = mos_new(2*i - 1)%matrix%local_data(:, icol)
+            work%local_data(:, icol + lcol) = mos_new(2*i)%matrix%local_data(:, icol)
          END DO
 
          CALL cp_dbcsr_sm_fm_multiply(cosmat, work, work1, ncol=newdim)
          CALL cp_dbcsr_sm_fm_multiply(sinmat, work, work2, ncol=newdim)
 
          DO icol = 1, lcol
-            work%local_data(:, icol) = work1%local_data(:, icol)-work2%local_data(:, icol+lcol)
-            work%local_data(:, icol+lcol) = work1%local_data(:, icol+lcol)+work2%local_data(:, icol)
+            work%local_data(:, icol) = work1%local_data(:, icol) - work2%local_data(:, icol + lcol)
+            work%local_data(:, icol + lcol) = work1%local_data(:, icol + lcol) + work2%local_data(:, icol)
          END DO
 
          CALL cp_fm_release(work1)
@@ -1460,12 +1458,12 @@ CONTAINS
 
          CALL cp_fm_create(work1, matrix_struct=newstruct1)
 
-         CALL cp_gemm("T", "N", nmo, newdim, nao, 1.0_dp, mos_new(2*i-1)%matrix, &
+         CALL cp_gemm("T", "N", nmo, newdim, nao, 1.0_dp, mos_new(2*i - 1)%matrix, &
                       work, 0.0_dp, work1)
 
          DO icol = 1, lcol
             op_fm_set(1, i)%matrix%local_data(:, icol) = work1%local_data(:, icol)
-            op_fm_set(2, i)%matrix%local_data(:, icol) = work1%local_data(:, icol+lcol)
+            op_fm_set(2, i)%matrix%local_data(:, icol) = work1%local_data(:, icol + lcol)
          END DO
 
          CALL cp_gemm("T", "N", nmo, newdim, nao, 1.0_dp, mos_new(2*i)%matrix, &
@@ -1473,9 +1471,9 @@ CONTAINS
 
          DO icol = 1, lcol
             op_fm_set(1, i)%matrix%local_data(:, icol) = &
-               op_fm_set(1, i)%matrix%local_data(:, icol)+work1%local_data(:, icol+lcol)
+               op_fm_set(1, i)%matrix%local_data(:, icol) + work1%local_data(:, icol + lcol)
             op_fm_set(2, i)%matrix%local_data(:, icol) = &
-               op_fm_set(2, i)%matrix%local_data(:, icol)-work1%local_data(:, icol)
+               op_fm_set(2, i)%matrix%local_data(:, icol) - work1%local_data(:, icol)
          END DO
 
          CALL cp_fm_release(work)
@@ -1522,7 +1520,7 @@ CONTAINS
       TYPE(cp_para_env_type), POINTER                    :: para_env
       TYPE(cp_result_type), POINTER                      :: results
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: com_rxrpnl, magmom, matrix_s, moments, &
-                                                            rho_ao!, rho_ao_im
+                                                            rho_ao
       TYPE(dbcsr_type), POINTER                          :: mat_tmp_ao
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(distribution_1d_type), POINTER                :: local_particles
@@ -1532,6 +1530,8 @@ CONTAINS
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(rt_moments_type), POINTER                     :: rtm
+
+!, rho_ao_im
 
       CPASSERT(ASSOCIATED(qs_env))
 
@@ -1545,23 +1545,23 @@ CONTAINS
       ! electronic contribution
       NULLIFY (moments, matrix_s)
       CALL get_qs_env(qs_env=qs_env, matrix_s=matrix_s)
-      nm = (6+11*nmom+6*nmom**2+nmom**3)/6-1
+      nm = (6 + 11*nmom + 6*nmom**2 + nmom**3)/6 - 1
       nodealloc = .FALSE.
       nodealloc_2 = .FALSE.
 
       IF (qs_env%run_rtp .AND. ASSOCIATED(qs_env%rtp%rtm)) THEN
-        NULLIFY(rtm)
-        CALL get_rtp(qs_env%rtp, rtm = rtm)
-        CALL get_rtm(rtm, el_moments = moments)
-        nodealloc = .TRUE.
+         NULLIFY (rtm)
+         CALL get_rtp(qs_env%rtp, rtm=rtm)
+         CALL get_rtm(rtm, el_moments=moments)
+         nodealloc = .TRUE.
       ELSE
-        CALL dbcsr_allocate_matrix_set(moments, nm)
-        DO i = 1, nm
-           ALLOCATE (moments(i)%matrix)
-           CALL dbcsr_copy(moments(i)%matrix, matrix_s(1)%matrix, "Moments")
-          CALL dbcsr_set(moments(i)%matrix, 0.0_dp)
-        END DO
-        CALL build_local_moment_matrix(qs_env, moments, nmom, ref_point=rcc)
+         CALL dbcsr_allocate_matrix_set(moments, nm)
+         DO i = 1, nm
+            ALLOCATE (moments(i)%matrix)
+            CALL dbcsr_copy(moments(i)%matrix, matrix_s(1)%matrix, "Moments")
+            CALL dbcsr_set(moments(i)%matrix, 0.0_dp)
+         END DO
+         CALL build_local_moment_matrix(qs_env, moments, nmom, ref_point=rcc)
       ENDIF
 
       NULLIFY (dft_control, rho, cell, particle_set, qs_kind_set, results, para_env, matrix_s, rho_ao)
@@ -1578,8 +1578,8 @@ CONTAINS
       CALL qs_rho_get(rho, rho_ao=rho_ao)
 
       nm = SIZE(moments)
-      ALLOCATE (rmom(nm+1, 3))
-      ALLOCATE (rlab(nm+1))
+      ALLOCATE (rmom(nm + 1, 3))
+      ALLOCATE (rlab(nm + 1))
       rmom = 0.0_dp
       rlab = ""
 
@@ -1591,16 +1591,16 @@ CONTAINS
       trace = 0.0_dp
       DO ispin = 1, dft_control%nspins
          CALL dbcsr_dot(rho_ao(ispin)%matrix, matrix_s(1)%matrix, trace)
-         rmom(1, 1) = rmom(1, 1)+trace
+         rmom(1, 1) = rmom(1, 1) + trace
       END DO
 
       DO i = 1, SIZE(moments)
          strace = 0._dp
          DO ispin = 1, dft_control%nspins
             CALL dbcsr_dot(rho_ao(ispin)%matrix, moments(i)%matrix, trace)
-            strace = strace+trace
+            strace = strace + trace
          END DO
-         rmom(i+1, 1) = strace
+         rmom(i + 1, 1) = strace
       END DO
 
       ! ! include imaginary part of the density for RTP
@@ -1635,42 +1635,42 @@ CONTAINS
          DO ia = 1, local_particles%n_el(ikind)
             iatom = local_particles%list(ikind)%array(ia)
             ! fold atomic positions back into unit cell
-            ria = pbc(particle_set(iatom)%r-rcc, cell)+rcc
-            ria = ria-rcc
+            ria = pbc(particle_set(iatom)%r - rcc, cell) + rcc
+            ria = ria - rcc
             atomic_kind => particle_set(iatom)%atomic_kind
             CALL get_atomic_kind(atomic_kind, kind_number=akind)
             CALL get_qs_kind(qs_kind_set(akind), core_charge=charge)
-            rmom(1, 2) = rmom(1, 2)-charge
+            rmom(1, 2) = rmom(1, 2) - charge
             DO l = 1, nm
-               ix = indco(1, l+1)
-               iy = indco(2, l+1)
-               iz = indco(3, l+1)
+               ix = indco(1, l + 1)
+               iy = indco(2, l + 1)
+               iz = indco(3, l + 1)
                dd = 1._dp
                IF (ix > 0) dd = dd*ria(1)**ix
                IF (iy > 0) dd = dd*ria(2)**iy
                IF (iz > 0) dd = dd*ria(3)**iz
-               rmom(l+1, 2) = rmom(l+1, 2)-charge*dd
-               CALL set_label(rlab(l+1), ix, iy, iz)
+               rmom(l + 1, 2) = rmom(l + 1, 2) - charge*dd
+               CALL set_label(rlab(l + 1), ix, iy, iz)
             END DO
          END DO
       END DO
       CALL mp_sum(rmom(:, 2), para_env%group)
       rmom(:, :) = -rmom(:, :)
-      rmom(:, 3) = rmom(:, 1)+rmom(:, 2)
+      rmom(:, 3) = rmom(:, 1) + rmom(:, 2)
 
       ! magnetic moments
       IF (magnetic) THEN
          nm = 3 ! only first moments
          NULLIFY (magmom)
          IF (qs_env%run_rtp .AND. ASSOCIATED(qs_env%rtp%rtm)) THEN
-           NULLIFY(rtm)
-           CALL get_rtp(qs_env%rtp, rtm = rtm)
-           CALL get_rtm(rtm, magdipole_moment = magmom)
-           nodealloc = .TRUE.
+            NULLIFY (rtm)
+            CALL get_rtp(qs_env%rtp, rtm=rtm)
+            CALL get_rtm(rtm, magdipole_moment=magmom)
+            nodealloc = .TRUE.
          ELSE
-           CALL dbcsr_allocate_matrix_set(magmom, nm)
-           CALL initialize_dbcsr_operator_matrix(qs_env, magmom, dbcsr_type_antisymmetric)
-           CALL build_local_magmom_matrix(qs_env, magmom, nm, ref_point=rcc)
+            CALL dbcsr_allocate_matrix_set(magmom, nm)
+            CALL initialize_dbcsr_operator_matrix(qs_env, magmom, dbcsr_type_antisymmetric)
+            CALL build_local_magmom_matrix(qs_env, magmom, nm, ref_point=rcc)
          ENDIF
 
          ! Allocate matrices to store the matrix product to be traced (dbcsr_trace only works for products of
@@ -1694,7 +1694,7 @@ CONTAINS
                CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao(ispin)%matrix, magmom(i)%matrix, &
                                    0.0_dp, mat_tmp_ao)
                CALL dbcsr_trace(mat_tmp_ao, trace)
-               strace = strace+trace
+               strace = strace + trace
             END DO
             mmom(i) = strace
          END DO
@@ -1709,14 +1709,14 @@ CONTAINS
 
             NULLIFY (com_rxrpnl)
             IF (qs_env%run_rtp .AND. ASSOCIATED(qs_env%rtp%rtm)) THEN
-              NULLIFY(rtm)
-              CALL get_rtp(qs_env%rtp, rtm = rtm)
-              CALL get_rtm(rtm, com_rxrVnl = com_rxrpnl)
-              nodealloc_2 = .TRUE.
+               NULLIFY (rtm)
+               CALL get_rtp(qs_env%rtp, rtm=rtm)
+               CALL get_rtm(rtm, com_rxrVnl=com_rxrpnl)
+               nodealloc_2 = .TRUE.
             ELSE
-              CALL dbcsr_allocate_matrix_set(com_rxrpnl, nm)
-              CALL initialize_dbcsr_operator_matrix(qs_env, com_rxrpnl, dbcsr_type_no_symmetry)
-              CALL build_com_rxrpnl(qs_env, com_rxrpnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, ref_point = rcc)
+               CALL dbcsr_allocate_matrix_set(com_rxrpnl, nm)
+               CALL initialize_dbcsr_operator_matrix(qs_env, com_rxrpnl, dbcsr_type_no_symmetry)
+               CALL build_com_rxrpnl(qs_env, com_rxrpnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, ref_point=rcc)
             ENDIF
 
             DO i = 1, SIZE(com_rxrpnl)
@@ -1726,9 +1726,9 @@ CONTAINS
                   CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao(ispin)%matrix, com_rxrpnl(i)%matrix, &
                                       0.0_dp, mat_tmp_ao)
                   CALL dbcsr_trace(mat_tmp_ao, trace)
-                  strace = strace+trace
+                  strace = strace + trace
                END DO
-               mmom_nonloc(i) = mmom(i)+strace
+               mmom_nonloc(i) = mmom(i) + strace
             END DO
 
             IF (.NOT. nodealloc_2) CALL dbcsr_deallocate_matrix_set(com_rxrpnl)
@@ -1781,16 +1781,16 @@ CONTAINS
       LOGICAL                                            :: nodealloc, nodealloc_2
       REAL(dp)                                           :: eps_ppnl, strace, trace
       REAL(dp), ALLOCATABLE, DIMENSION(:)                :: momenta, momenta_nonloc
+      TYPE(cell_type), POINTER                           :: cell
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, matrix_vr, momenta_ao, rho_ao, &
                                                             rho_ao_im
       TYPE(dbcsr_type), POINTER                          :: mat_tmp_ao
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: sab_all, sap_ppnl
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(qs_rho_type), POINTER                         :: rho
-      TYPE(cell_type), POINTER                           :: cell
-      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(rt_moments_type), POINTER                     :: rtm
 
       CPASSERT(ASSOCIATED(qs_env))
@@ -1799,9 +1799,9 @@ CONTAINS
       nm = 3
       nodealloc = .FALSE.
       nodealloc_2 = .FALSE.
-      
+
       ALLOCATE (momenta(nm))
-      ALLOCATE (rlab(nm+1))
+      ALLOCATE (rlab(nm + 1))
       momenta = 0.0_dp
       ALLOCATE (momenta_nonloc(nm))
       momenta_nonloc = 0.0_dp
@@ -1809,25 +1809,25 @@ CONTAINS
 
       ! get labels
       DO ind = 1, nm
-         ix = indco(1, ind+1)
-         iy = indco(2, ind+1)
-         iz = indco(3, ind+1)
-         CALL set_label(rlab(ind+1), ix, iy, iz)
+         ix = indco(1, ind + 1)
+         iy = indco(2, ind + 1)
+         iz = indco(3, ind + 1)
+         CALL set_label(rlab(ind + 1), ix, iy, iz)
       ENDDO
 
       ! Allocate dbcsr momentum matrix in ao basis
       NULLIFY (momenta_ao, matrix_s)
 
       IF (qs_env%run_rtp .AND. ASSOCIATED(qs_env%rtp%rtm)) THEN
-        NULLIFY(rtm)
-        CALL get_rtp(qs_env%rtp, rtm = rtm)
-        CALL get_rtm(rtm, momentum = momenta_ao)
-        nodealloc = .TRUE.
+         NULLIFY (rtm)
+         CALL get_rtp(qs_env%rtp, rtm=rtm)
+         CALL get_rtm(rtm, momentum=momenta_ao)
+         nodealloc = .TRUE.
       ELSE
-        CALL dbcsr_allocate_matrix_set(momenta_ao, nm)
-        CALL initialize_dbcsr_operator_matrix(qs_env, momenta_ao, dbcsr_type_antisymmetric)
-        ! Calculate linear momentum matrix in ao basis
-        CALL build_lin_mom_matrix(qs_env, momenta_ao)
+         CALL dbcsr_allocate_matrix_set(momenta_ao, nm)
+         CALL initialize_dbcsr_operator_matrix(qs_env, momenta_ao, dbcsr_type_antisymmetric)
+         ! Calculate linear momentum matrix in ao basis
+         CALL build_lin_mom_matrix(qs_env, momenta_ao)
       ENDIF
 
       NULLIFY (rho, dft_control)
@@ -1853,7 +1853,7 @@ CONTAINS
             CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao(ispin)%matrix, momenta_ao(ind)%matrix, &
                                 0.0_dp, mat_tmp_ao)
             CALL dbcsr_trace(mat_tmp_ao, trace)
-            strace = strace+trace
+            strace = strace + trace
          END DO
          momenta(ind) = strace
       END DO
@@ -1868,20 +1868,20 @@ CONTAINS
             CALL get_qs_env(qs_env, &
                             sap_ppnl=sap_ppnl, &
                             sab_all=sab_all, &
-                            qs_kind_set=qs_kind_set,&
-                            particle_set = particle_set,&
-                            cell = cell)
+                            qs_kind_set=qs_kind_set, &
+                            particle_set=particle_set, &
+                            cell=cell)
             eps_ppnl = dft_control%qs_control%eps_ppnl
             NULLIFY (matrix_vr)
             IF (qs_env%run_rtp .AND. ASSOCIATED(qs_env%rtp%rtm)) THEN
-              NULLIFY(rtm)
-              CALL get_rtp(qs_env%rtp, rtm = rtm)
-              CALL get_rtm(rtm, com_rVnl = matrix_vr)
-              nodealloc_2 = .TRUE.
+               NULLIFY (rtm)
+               CALL get_rtp(qs_env%rtp, rtm=rtm)
+               CALL get_rtm(rtm, com_rVnl=matrix_vr)
+               nodealloc_2 = .TRUE.
             ELSE
-              CALL dbcsr_allocate_matrix_set(matrix_vr, 3)
-              CALL initialize_dbcsr_operator_matrix(qs_env, matrix_vr, dbcsr_type_no_symmetry)
-              CALL build_com_rpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, particle_set, cell)
+               CALL dbcsr_allocate_matrix_set(matrix_vr, 3)
+               CALL initialize_dbcsr_operator_matrix(qs_env, matrix_vr, dbcsr_type_no_symmetry)
+               CALL build_com_rpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, particle_set, cell)
             ENDIF
          ENDIF
 
@@ -1893,9 +1893,9 @@ CONTAINS
                CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao_im(ispin)%matrix, momenta_ao(ind)%matrix, &
                                    0.0_dp, mat_tmp_ao)
                CALL dbcsr_trace(mat_tmp_ao, trace)
-               strace = strace+trace
+               strace = strace + trace
             END DO
-            momenta(ind) = momenta(ind)+strace
+            momenta(ind) = momenta(ind) + strace
 
             ! non local commutator term if desired for response calculations
             IF (com_nonloc) THEN
@@ -1905,9 +1905,9 @@ CONTAINS
                   CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao_im(ispin)%matrix, matrix_vr(ind)%matrix, &
                                       0.0_dp, mat_tmp_ao)
                   CALL dbcsr_trace(mat_tmp_ao, trace)
-                  strace = strace+trace
+                  strace = strace + trace
                END DO
-               momenta_nonloc(ind) = momenta(ind)-strace
+               momenta_nonloc(ind) = momenta(ind) - strace
             ENDIF
          END DO
 
@@ -1933,40 +1933,44 @@ CONTAINS
 
    END SUBROUTINE qs_moment_vel
 
-
 ! **************************************************************************************************
 !> \brief ...
 !> \param qs_env ...
 !> \param com_nonloc ...
+!> \param nmoments ...
+!> \param reference ...
+!> \param ref_point ...
 !> \param unit_number ...
 ! **************************************************************************************************
    SUBROUTINE qs_qupole_vel(qs_env, com_nonloc, nmoments, reference, ref_point, unit_number)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       LOGICAL, INTENT(IN)                                :: com_nonloc
+      INTEGER, INTENT(IN)                                :: nmoments, reference
       REAL(dp), DIMENSION(:), POINTER                    :: ref_point
-      INTEGER, INTENT(IN)                                :: nmoments, reference, unit_number
+      INTEGER, INTENT(IN)                                :: unit_number
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'qs_qupole_vel', routineP = moduleN//':'//routineN
 
       CHARACTER(LEN=8), ALLOCATABLE, DIMENSION(:)        :: rlab
       CHARACTER(LEN=default_string_length)               :: description, description_nonloc
-      INTEGER                                            :: handle, ind, ispin, ix, iy, iz, nm, idir, &
-                                                            nmom
-      REAL(dp)                                           :: eps_ppnl, strace, trace, exp_s
-      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: qupole_vel, qupole_vel_im, qupole, qupole_vel_nonloc,&
-                                                            qupole_vel_im_nonloc, qupole_nonloc
+      INTEGER                                            :: handle, idir, ind, ispin, ix, iy, iz, &
+                                                            nm, nmom
+      REAL(dp)                                           :: eps_ppnl, exp_s, strace, trace
+      REAL(dp), ALLOCATABLE, DIMENSION(:)                :: qupole, qupole_nonloc, qupole_vel, &
+                                                            qupole_vel_im, qupole_vel_im_nonloc, &
+                                                            qupole_vel_nonloc
       REAL(dp), DIMENSION(3)                             :: rcc
+      TYPE(cell_type), POINTER                           :: cell
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, matrix_vr, moments_ao, rho_ao, &
                                                             rho_ao_im
-      TYPE(dbcsr_p_type), DIMENSION(:,:), POINTER        :: momdiff
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: momdiff
       TYPE(dbcsr_type), POINTER                          :: mat_tmp_ao
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: sab_all, sap_ppnl
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(qs_rho_type), POINTER                         :: rho
-      TYPE(cell_type), POINTER                           :: cell
-      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
 
       CPASSERT(ASSOCIATED(qs_env))
       CALL timeset(routineN, handle)
@@ -1979,14 +1983,14 @@ CONTAINS
       nm = 3
       ! nodealloc = .FALSE.
       ! nodealloc_2 = .FALSE.
-      
+
       ALLOCATE (qupole_vel(9))
       ALLOCATE (qupole_vel_nonloc(6))
       ALLOCATE (qupole(6))
       ALLOCATE (qupole_nonloc(6))
       ALLOCATE (qupole_vel_im(9))
       ALLOCATE (qupole_vel_im_nonloc(6))
-      ALLOCATE (rlab(6+1))
+      ALLOCATE (rlab(6 + 1))
 
       qupole_vel = 0._dp
       qupole_vel_nonloc = 0._dp
@@ -1999,9 +2003,9 @@ CONTAINS
       exp_s = 0._dp
 
       DO ind = 1, 6
-         ix = indco(1, ind+4)
-         iy = indco(2, ind+4)
-         iz = indco(3, ind+4)
+         ix = indco(1, ind + 4)
+         iy = indco(2, ind + 4)
+         iz = indco(3, ind + 4)
          CALL set_label(rlab(ind), ix, iy, iz)
       ENDDO
 
@@ -2014,19 +2018,19 @@ CONTAINS
       !   CALL get_rtm(rtm, momentum = moments_ao)
       !   nodealloc = .TRUE.
       ! ELSE
-        CALL dbcsr_allocate_matrix_set(moments_ao, nm)
-        CALL initialize_dbcsr_operator_matrix(qs_env, moments_ao, dbcsr_type_no_symmetry)
-        ! Calculate linear momentum matrix in ao basis
+      CALL dbcsr_allocate_matrix_set(moments_ao, nm)
+      CALL initialize_dbcsr_operator_matrix(qs_env, moments_ao, dbcsr_type_no_symmetry)
+      ! Calculate linear momentum matrix in ao basis
       ! ENDIF
 
-        CALL dbcsr_allocate_matrix_set(momdiff, nm, 3)
-        DO ind = 1, nm
-          DO idir = 1, 3
-            ALLOCATE(momdiff(ind,  idir)%matrix)
+      CALL dbcsr_allocate_matrix_set(momdiff, nm, 3)
+      DO ind = 1, nm
+         DO idir = 1, 3
+            ALLOCATE (momdiff(ind, idir)%matrix)
             CALL dbcsr_copy(momdiff(ind, idir)%matrix, moments_ao(ind)%matrix, &
-                  "momdiff"//"-"//TRIM(ADJUSTL(cp_to_string(idir*ind))))
-          ENDDO
-        ENDDO
+                            "momdiff"//"-"//TRIM(ADJUSTL(cp_to_string(idir*ind))))
+         ENDDO
+      ENDDO
 
       CALL build_diffop_matrix(qs_env, moments_ao, momdiff, 1, rcc)
       ! CALL rRc_xyz_der_ao(moments_ao, momdiff, qs_env, rcc, 1)
@@ -2047,49 +2051,49 @@ CONTAINS
       CALL dbcsr_desymmetrize(matrix_s(1)%matrix, mat_tmp_ao)
 
       ! Calculate expectation value over real part
-      DO ind = 1, 3 
-        DO idir = 1, 3
-          strace = 0._dp
-          DO ispin = 1, dft_control%nspins
-            CALL dbcsr_set(mat_tmp_ao, 0._dp)
-            CALL dbcsr_multiply("T", "N", 1._dp, rho_ao(ispin)%matrix, momdiff(ind, idir)%matrix, 0._dp, mat_tmp_ao)
-            CALL dbcsr_trace(mat_tmp_ao, trace)
-            strace = strace + trace
-          ENDDO
-          qupole_vel((ind-1)*3 + idir) = strace
-        ENDDO
+      DO ind = 1, 3
+         DO idir = 1, 3
+            strace = 0._dp
+            DO ispin = 1, dft_control%nspins
+               CALL dbcsr_set(mat_tmp_ao, 0._dp)
+               CALL dbcsr_multiply("T", "N", 1._dp, rho_ao(ispin)%matrix, momdiff(ind, idir)%matrix, 0._dp, mat_tmp_ao)
+               CALL dbcsr_trace(mat_tmp_ao, trace)
+               strace = strace + trace
+            ENDDO
+            qupole_vel((ind - 1)*3 + idir) = strace
+         ENDDO
       ENDDO
 
       IF (com_nonloc) THEN
-        NULLIFY (sap_ppnl, sab_all, qs_kind_set, particle_set, cell)
-        CALL get_qs_env(qs_env, &
-                        sap_ppnl=sap_ppnl, &
-                        sab_all=sab_all, &
-                        qs_kind_set=qs_kind_set,&
-                        particle_set = particle_set,&
-                        cell = cell)
-        eps_ppnl = dft_control%qs_control%eps_ppnl
-        NULLIFY (matrix_vr)
-        CALL dbcsr_allocate_matrix_set(matrix_vr, 6)
-        CALL initialize_dbcsr_operator_matrix(qs_env, matrix_vr, dbcsr_type_no_symmetry)
-        CALL build_com_rrpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, qs_env, rcc)
-      
-        DO idir = 1, 6
-          strace = 0._dp
-          DO ispin = 1, dft_control%nspins
-            CALL dbcsr_set(mat_tmp_ao, 0._dp)
-            CALL dbcsr_multiply("T", "N", 1._dp, rho_ao(ispin)%matrix, matrix_vr(idir)%matrix, 0._dp, mat_tmp_ao)
-            CALL dbcsr_trace(mat_tmp_ao, trace)
-            strace = strace + trace
-          ENDDO
-          qupole_vel_nonloc(idir) = strace
-        ENDDO
+         NULLIFY (sap_ppnl, sab_all, qs_kind_set, particle_set, cell)
+         CALL get_qs_env(qs_env, &
+                         sap_ppnl=sap_ppnl, &
+                         sab_all=sab_all, &
+                         qs_kind_set=qs_kind_set, &
+                         particle_set=particle_set, &
+                         cell=cell)
+         eps_ppnl = dft_control%qs_control%eps_ppnl
+         NULLIFY (matrix_vr)
+         CALL dbcsr_allocate_matrix_set(matrix_vr, 6)
+         CALL initialize_dbcsr_operator_matrix(qs_env, matrix_vr, dbcsr_type_no_symmetry)
+         CALL build_com_rrpnl(matrix_vr, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, qs_env, rcc)
+
+         DO idir = 1, 6
+            strace = 0._dp
+            DO ispin = 1, dft_control%nspins
+               CALL dbcsr_set(mat_tmp_ao, 0._dp)
+               CALL dbcsr_multiply("T", "N", 1._dp, rho_ao(ispin)%matrix, matrix_vr(idir)%matrix, 0._dp, mat_tmp_ao)
+               CALL dbcsr_trace(mat_tmp_ao, trace)
+               strace = strace + trace
+            ENDDO
+            qupole_vel_nonloc(idir) = strace
+         ENDDO
       ENDIF
 
       trace = 0.0_dp
       DO ispin = 1, dft_control%nspins
          CALL dbcsr_dot(rho_ao(ispin)%matrix, matrix_s(1)%matrix, trace)
-         exp_s = exp_s+trace
+         exp_s = exp_s + trace
       END DO
 
       ! imaginary part of the density for RTP
@@ -2097,55 +2101,54 @@ CONTAINS
          NULLIFY (rho_ao_im)
          CALL qs_rho_get(rho, rho_ao_im=rho_ao_im)
 
-        ! Calculate expectation value over imaginary part
-        DO ind = 1, 3 
-          DO idir = 1, 3
-            strace = 0._dp
-            DO ispin = 1, dft_control%nspins
-              CALL dbcsr_set(mat_tmp_ao, 0._dp)
-              CALL dbcsr_multiply("T", "N", 1._dp, rho_ao_im(ispin)%matrix, momdiff(ind, idir)%matrix, 0._dp, mat_tmp_ao)
-              CALL dbcsr_trace(mat_tmp_ao, trace)
-              strace = strace + trace
+         ! Calculate expectation value over imaginary part
+         DO ind = 1, 3
+            DO idir = 1, 3
+               strace = 0._dp
+               DO ispin = 1, dft_control%nspins
+                  CALL dbcsr_set(mat_tmp_ao, 0._dp)
+                  CALL dbcsr_multiply("T", "N", 1._dp, rho_ao_im(ispin)%matrix, momdiff(ind, idir)%matrix, 0._dp, mat_tmp_ao)
+                  CALL dbcsr_trace(mat_tmp_ao, trace)
+                  strace = strace + trace
+               ENDDO
+               qupole_vel_im((ind - 1)*3 + idir) = strace
             ENDDO
-            qupole_vel_im((ind-1)*3 + idir) = strace
-          ENDDO
-        ENDDO
+         ENDDO
 
-        IF (com_nonloc) THEN
-          DO idir = 1, 6
-            strace = 0._dp
-            DO ispin = 1, dft_control%nspins
-              CALL dbcsr_set(mat_tmp_ao, 0._dp)
-              CALL dbcsr_multiply("T", "N", 1._dp, rho_ao_im(ispin)%matrix, matrix_vr(idir)%matrix, 0._dp, mat_tmp_ao)
-              CALL dbcsr_trace(mat_tmp_ao, trace)
-              strace = strace + trace
+         IF (com_nonloc) THEN
+            DO idir = 1, 6
+               strace = 0._dp
+               DO ispin = 1, dft_control%nspins
+                  CALL dbcsr_set(mat_tmp_ao, 0._dp)
+                  CALL dbcsr_multiply("T", "N", 1._dp, rho_ao_im(ispin)%matrix, matrix_vr(idir)%matrix, 0._dp, mat_tmp_ao)
+                  CALL dbcsr_trace(mat_tmp_ao, trace)
+                  strace = strace + trace
+               ENDDO
+               qupole_vel_im_nonloc(idir) = strace
             ENDDO
-            qupole_vel_im_nonloc(idir) =  strace
-          ENDDO
-        ENDIF
+         ENDIF
       ENDIF
 
-      qupole(1) = 2 * (qupole_vel(1) + qupole_vel_im(1)) - exp_s
+      qupole(1) = 2*(qupole_vel(1) + qupole_vel_im(1)) - exp_s
       qupole(2) = qupole_vel(2) + qupole_vel_im(2) + qupole_vel(4) + qupole_vel_im(4)
       qupole(3) = qupole_vel(3) + qupole_vel_im(3) + qupole_vel(7) + qupole_vel_im(7)
-      qupole(4) = 2 * (qupole_vel(5) + qupole_vel_im(5)) - exp_s
+      qupole(4) = 2*(qupole_vel(5) + qupole_vel_im(5)) - exp_s
       qupole(5) = qupole_vel(6) + qupole_vel_im(6) + qupole_vel(8) + qupole_vel_im(8)
-      qupole(6) = 2*(qupole_vel(9) + qupole_vel_im(9) ) - exp_s
+      qupole(6) = 2*(qupole_vel(9) + qupole_vel_im(9)) - exp_s
 
       qupole(:) = -qupole(:)
 
       IF (com_nonloc) THEN
-        DO idir = 1, 6
-          qupole_nonloc(idir) = qupole(idir) - qupole_vel_nonloc(idir) - qupole_vel_im_nonloc(idir)
-          qupole_nonloc(:) = -qupole_nonloc(:)
-        ENDDO
+         DO idir = 1, 6
+            qupole_nonloc(idir) = qupole(idir) - qupole_vel_nonloc(idir) - qupole_vel_im_nonloc(idir)
+            qupole_nonloc(:) = -qupole_nonloc(:)
+         ENDDO
       ENDIF
 
       CALL dbcsr_deallocate_matrix_set(moments_ao)
       CALL dbcsr_deallocate_matrix(mat_tmp_ao)
       CALL dbcsr_deallocate_matrix_set(momdiff)
       IF (com_nonloc) CALL dbcsr_deallocate_matrix_set(matrix_vr)
-
 
       description = "Expectation value Q_vel [a. u.]"
       CALL print_second_moments(unit_number, qupole, rlab, description)
@@ -2167,17 +2170,17 @@ CONTAINS
 
    END SUBROUTINE qs_qupole_vel
 
-
 ! **************************************************************************************************
 !> \brief ...
 !> \param qs_env ...
 !> \param unit_number ...
+!> \param ref_point ...
 ! **************************************************************************************************
    SUBROUTINE qs_com_rrpnl(qs_env, unit_number, ref_point)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       INTEGER, INTENT(IN)                                :: unit_number
-      REAL(KIND=dp), DIMENSION(:), INTENT(IN),&
-                                      OPTIONAL, POINTER  :: ref_point
+      REAL(KIND=dp), DIMENSION(:), INTENT(IN), &
+         OPTIONAL, POINTER                               :: ref_point
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'qs_com_rrpnl', routineP = moduleN//':'//routineN
 
@@ -2207,7 +2210,7 @@ CONTAINS
       ALLOCATE (exp_value(nm))
       ALLOCATE (exp_value_2(9))
       ALLOCATE (exp_value_3(3))
-      ALLOCATE (rlab(nm+1))
+      ALLOCATE (rlab(nm + 1))
       exp_value = 0.0_dp
       exp_value_2 = 0.0_dp
       exp_value_3 = 0.0_dp
@@ -2215,9 +2218,9 @@ CONTAINS
 
       ! get labels
       DO ind = 1, nm
-         ix = indco(1, ind+4)
-         iy = indco(2, ind+4)
-         iz = indco(3, ind+4)
+         ix = indco(1, ind + 4)
+         iy = indco(2, ind + 4)
+         iz = indco(3, ind + 4)
          CALL set_label(rlab(ind), ix, iy, iz)
       ENDDO
 
@@ -2226,10 +2229,10 @@ CONTAINS
 
       ! get labels
       DO ind = 1, 3
-         ix = indco(1, ind+1)
-         iy = indco(2, ind+1)
-         iz = indco(3, ind+1)
-         CALL set_label(rlab_3(ind+1), ix, iy, iz)
+         ix = indco(1, ind + 1)
+         iy = indco(2, ind + 1)
+         iz = indco(3, ind + 1)
+         CALL set_label(rlab_3(ind + 1), ix, iy, iz)
       ENDDO
 
       ! ALLOCATE (rlab_2(10))
@@ -2286,7 +2289,7 @@ CONTAINS
             CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao(ispin)%matrix, com_rrpnl(ind)%matrix, &
                                 0.0_dp, mat_tmp_ao)
             CALL dbcsr_trace(mat_tmp_ao, trace)
-            strace = strace+trace
+            strace = strace + trace
          END DO
          exp_value(ind) = strace
       END DO
@@ -2329,9 +2332,9 @@ CONTAINS
                CALL dbcsr_multiply("T", "N", 1.0_dp, rho_ao_im(ispin)%matrix, com_rrpnl(ind)%matrix, &
                                    0.0_dp, mat_tmp_ao)
                CALL dbcsr_trace(mat_tmp_ao, trace)
-               strace = strace+trace
+               strace = strace + trace
             END DO
-            exp_value(ind) = exp_value(ind)+strace
+            exp_value(ind) = exp_value(ind) + strace
          END DO
       ENDIF
 
@@ -2413,10 +2416,10 @@ CONTAINS
       DO i = 1, ix
          WRITE (label(i:), "(A1)") "X"
       END DO
-      DO i = ix+1, ix+iy
+      DO i = ix + 1, ix + iy
          WRITE (label(i:), "(A1)") "Y"
       END DO
-      DO i = ix+iy+1, ix+iy+iz
+      DO i = ix + iy + 1, ix + iy + iz
          WRITE (label(i:), "(A1)") "Z"
       END DO
 
@@ -2494,12 +2497,12 @@ CONTAINS
             CASE DEFAULT
                WRITE (unit_number, "(T3,A,A,I2)") "Higher moment [Debye*Angstrom**(L-1)]", &
                   "  L=", l
-               i0 = (6+11*(l-1)+6*(l-1)**2+(l-1)**3)/6
-               i1 = (6+11*l+6*l**2+l**3)/6-1
-               dd = debye/(bohr)**(l-1)
+               i0 = (6 + 11*(l - 1) + 6*(l - 1)**2 + (l - 1)**3)/6
+               i1 = (6 + 11*l + 6*l**2 + l**3)/6 - 1
+               dd = debye/(bohr)**(l - 1)
                DO i = i0, i1, 3
                   WRITE (unit_number, "(T18,3(A,A,F14.8,4X))") &
-                     (TRIM(rlab(j+1)), "=", rmom(j+1, 3)*dd, j=i, MIN(i1, i+2))
+                     (TRIM(rlab(j + 1)), "=", rmom(j + 1, 3)*dd, j=i, MIN(i1, i + 2))
                END DO
             END SELECT
          END DO
@@ -2508,7 +2511,7 @@ CONTAINS
                dd = SQRT(SUM(mmom(1:3)**2))
                WRITE (unit_number, "(T3,A)") "Magnetic Dipole Moment (only orbital contrib.) [a.u.]"
                WRITE (unit_number, "(T5,3(A,A,F14.8,1X),T60,A,T67,F14.8)") &
-                  (TRIM(rlab(i+1)), "=", mmom(i), i=1, 3), "Total=", dd
+                  (TRIM(rlab(i + 1)), "=", mmom(i), i=1, 3), "Total=", dd
             END IF
          END IF
       END IF
@@ -2536,7 +2539,7 @@ CONTAINS
          dd = SQRT(SUM(momenta(1:3)**2))
          WRITE (unit_number, "(T3,A)") description
          WRITE (unit_number, "(T5,3(A,A,D22.12,1X),T80,A,T86,F14.8)") &
-            (TRIM(rlab(i+1)), "=", momenta(i), i=1, 3), "Total=", dd
+            (TRIM(rlab(i + 1)), "=", momenta(i), i=1, 3), "Total=", dd
       ENDIF
 
    END SUBROUTINE print_first_moments
@@ -2643,7 +2646,6 @@ CONTAINS
 
    END SUBROUTINE initialize_dbcsr_operator_matrix
 
-
 ! **************************************************************************************************
 !> \brief Calculates moment matrices in AO basis for fixed ions,
 !>        These do not change during the propagation.
@@ -2657,29 +2659,29 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'moment_matrices_ao_basis', &
          routineP = moduleN//':'//routineN
 
-      INTEGER                                            :: handle, maxmom, nm, nmom, reference,i
+      INTEGER                                            :: handle, i, maxmom, nm, nmom, reference
       REAL(dp)                                           :: eps_ppnl
-      REAL(dp), DIMENSION(3)                             :: rcc,kvec
+      REAL(dp), DIMENSION(3)                             :: kvec, rcc
       REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
       TYPE(cell_type), POINTER                           :: cell
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
          POINTER                                         :: sab_all, sap_ppnl
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(section_vals_type), POINTER                   :: input
-      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
 
       CALL timeset(routineN, handle)
 
-      NULLIFY(input, cell, dft_control)
+      NULLIFY (input, cell, dft_control)
 
-      CALL get_qs_env(qs_env,&
-                      cell = cell,&
-                      dft_control = dft_control,&
-                      input = input)
+      CALL get_qs_env(qs_env, &
+                      cell=cell, &
+                      dft_control=dft_control, &
+                      input=input)
       ! reference point
       reference = section_get_ival(section_vals=input, &
-                                      keyword_name="DFT%PRINT%MOMENTS%REFERENCE")
+                                   keyword_name="DFT%PRINT%MOMENTS%REFERENCE")
       NULLIFY (ref_point)
       CALL section_vals_val_get(input, "DFT%PRINT%MOMENTS%REF_POINT", r_vals=ref_point)
 
@@ -2687,7 +2689,7 @@ CONTAINS
       rcc = pbc(rcc, cell)
 
       maxmom = section_get_ival(section_vals=input, &
-                                 keyword_name="DFT%PRINT%MOMENTS%MAX_MOMENT")
+                                keyword_name="DFT%PRINT%MOMENTS%MAX_MOMENT")
       nmom = MIN(maxmom, current_maxl)
       nm = 3
 
@@ -2695,36 +2697,36 @@ CONTAINS
       CALL get_qs_env(qs_env, &
                       sap_ppnl=sap_ppnl, &
                       sab_all=sab_all, &
-                      qs_kind_set=qs_kind_set,&
-                      particle_set = particle_set)
+                      qs_kind_set=qs_kind_set, &
+                      particle_set=particle_set)
 
       eps_ppnl = dft_control%qs_control%eps_ppnl
 
       IF (ASSOCIATED(rtm%el_moments)) THEN
-        CALL build_local_moment_matrix(qs_env, rtm%el_moments, nmom, ref_point=rcc)
+         CALL build_local_moment_matrix(qs_env, rtm%el_moments, nmom, ref_point=rcc)
       ENDIF
 
       IF (ASSOCIATED(rtm%sinmat) .AND. ASSOCIATED(rtm%cosmat)) THEN
-        DO i = 1, 3
-          kvec(:) = twopi*cell%h_inv(i, :)
-          CALL build_berry_moment_matrix(qs_env, rtm%cosmat(i)%matrix, rtm%sinmat(i)%matrix, kvec)
-        ENDDO
+         DO i = 1, 3
+            kvec(:) = twopi*cell%h_inv(i, :)
+            CALL build_berry_moment_matrix(qs_env, rtm%cosmat(i)%matrix, rtm%sinmat(i)%matrix, kvec)
+         ENDDO
       ENDIF
-      
+
       IF (ASSOCIATED(rtm%magdipole_moment)) THEN
-        CALL build_local_magmom_matrix(qs_env, rtm%magdipole_moment, nm, ref_point=rcc)
+         CALL build_local_magmom_matrix(qs_env, rtm%magdipole_moment, nm, ref_point=rcc)
       ENDIF
-      
+
       IF (ASSOCIATED(rtm%momentum)) THEN
-        CALL build_lin_mom_matrix(qs_env, rtm%momentum)
-      ENDIF 
-      
-      IF (ASSOCIATED(rtm%com_rVnl)) THEN
-        CALL build_com_rpnl(rtm%com_rVnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, particle_set, cell)
+         CALL build_lin_mom_matrix(qs_env, rtm%momentum)
       ENDIF
-      
+
+      IF (ASSOCIATED(rtm%com_rVnl)) THEN
+         CALL build_com_rpnl(rtm%com_rVnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, particle_set, cell)
+      ENDIF
+
       IF (ASSOCIATED(rtm%com_rxrVnl)) THEN
-        CALL build_com_rxrpnl(qs_env, rtm%com_rxrVnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, ref_point = rcc)
+         CALL build_com_rxrpnl(qs_env, rtm%com_rxrVnl, qs_kind_set, sab_all, sap_ppnl, eps_ppnl, ref_point=rcc)
       ENDIF
 
       CALL timestop(handle)

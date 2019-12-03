@@ -87,8 +87,8 @@ MODULE input_cp2k_dft
         shape_function_gaussian, sic_ad, sic_eo, sic_list_all, sic_list_unpaired, sic_mauri_spz, &
         sic_mauri_us, sic_none, slater, smear_energy_window, smear_fermi_dirac, smear_list, &
         sparse_guess, tddfpt_davidson, tddfpt_excitations, tddfpt_lanczos, tddfpt_singlet, &
-        tddfpt_spin_cons, tddfpt_spin_flip, tddfpt_triplet, use_coulomb, use_diff,&
-        use_mom_ref_com, use_mom_ref_coac, use_mom_ref_user, use_mom_ref_zero, use_no, &
+        tddfpt_spin_cons, tddfpt_spin_flip, tddfpt_triplet, use_coulomb, use_diff, &
+        use_mom_ref_coac, use_mom_ref_com, use_mom_ref_user, use_mom_ref_zero, use_no, &
         use_restart_wfn, use_rt_restart, use_scf_wfn, wannier_projection, weight_type_mass, &
         weight_type_unit, wfi_aspc_nr, wfi_frozen_method_nr, wfi_linear_p_method_nr, &
         wfi_linear_ps_method_nr, wfi_linear_wf_method_nr, wfi_ps_method_nr, &
@@ -1662,7 +1662,7 @@ CONTAINS
                           default_l_val=.FALSE., &
                           lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(print_key, keyword)
-      CALL keyword_release(keyword)      
+      CALL keyword_release(keyword)
       CALL keyword_create(keyword, __LOCATION__, &
                           name="ANG_MOM_COM_NL", &
                           description="Include non local commutator for angulara momentum calculation", &
@@ -1685,8 +1685,8 @@ CONTAINS
       CALL keyword_release(keyword)
       CALL keyword_create(keyword, __LOCATION__, &
                           name="Q_VEL", &
-                          description="Track velocity representation of quadrupole moment, only implemented without," // &
-                                       "periodic boundaries", &
+                          description="Track velocity representation of quadrupole moment, only implemented without,"// &
+                          "periodic boundaries", &
                           usage="Q_VEL yes", &
                           repeats=.FALSE., &
                           n_var=1, &
@@ -1750,7 +1750,7 @@ CONTAINS
                           unit_str='bohr')
       CALL section_add_keyword(print_key, keyword)
       CALL keyword_release(keyword)
-      
+
       CALL section_add_subsection(section, print_key)
       CALL section_release(print_key)
 

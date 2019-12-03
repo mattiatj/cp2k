@@ -22,6 +22,7 @@ MODULE rt_propagation_types
                                               cite_reference
    USE cp_control_types,                ONLY: dft_control_type,&
                                               rtp_control_type
+   USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
    USE cp_dbcsr_operations,             ONLY: dbcsr_allocate_matrix_set,&
                                               dbcsr_deallocate_matrix_set
    USE cp_fm_pool_types,                ONLY: cp_fm_pool_p_type,&
@@ -35,29 +36,19 @@ MODULE rt_propagation_types
                                               cp_fm_release
    USE cp_fm_vect,                      ONLY: cp_fm_vect_dealloc
    USE cp_log_handling,                 ONLY: cp_to_string
-   USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
-   USE dbcsr_api,                       ONLY: dbcsr_create,&
-                                              dbcsr_deallocate_matrix,&
-                                              dbcsr_init_p,&
-                                              dbcsr_p_type,&
-                                              dbcsr_type,&
-                                              dbcsr_type_antisymmetric,&
-                                              dbcsr_type_symmetric,&
-                                              dbcsr_type_no_symmetry,&
-                                              dbcsr_copy,&
-                                              dbcsr_set
+   USE dbcsr_api,                       ONLY: &
+        dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_init_p, dbcsr_p_type, dbcsr_set, &
+        dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry
+   USE input_section_types,             ONLY: section_get_ival,&
+                                              section_get_lval,&
+                                              section_vals_type
    USE kinds,                           ONLY: dp
-   USE input_section_types,             ONLY: section_get_lval,&
-                                              section_vals_type,&
-                                              section_get_ival,&
-                                              section_vals_val_get
    USE orbital_pointers,                ONLY: current_maxl
    USE qs_matrix_pools,                 ONLY: mpools_get,&
                                               qs_matrix_pools_type
    USE qs_mo_types,                     ONLY: get_mo_set,&
                                               mo_set_p_type
    USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
-
 #include "./base/base_uses.f90"
 
    IMPLICIT NONE
@@ -148,8 +139,8 @@ MODULE rt_propagation_types
              get_rtp, &
              rt_prop_release, &
              rtp_history_create, &
-             rt_moments_create,&
-             get_rtm,&
+             rt_moments_create, &
+             get_rtm, &
              rt_moments_release
 CONTAINS
 
@@ -228,23 +219,23 @@ CONTAINS
          END IF
          DO i = 1, nspin
             DO j = 1, 2
-               NULLIFY (rtp%mos%old(2*(i-1)+j)%matrix)
-               NULLIFY (rtp%mos%new(2*(i-1)+j)%matrix)
-               NULLIFY (rtp%mos%next(2*(i-1)+j)%matrix)
-               CALL cp_fm_create(rtp%mos%old(2*(i-1)+j)%matrix, &
+               NULLIFY (rtp%mos%old(2*(i - 1) + j)%matrix)
+               NULLIFY (rtp%mos%new(2*(i - 1) + j)%matrix)
+               NULLIFY (rtp%mos%next(2*(i - 1) + j)%matrix)
+               CALL cp_fm_create(rtp%mos%old(2*(i - 1) + j)%matrix, &
                                  matrix_struct=mos(i)%mo_set%mo_coeff%matrix_struct, &
-                                 name="mos_old"//TRIM(ADJUSTL(cp_to_string(2*(i-1)+j))))
-               CALL cp_fm_create(rtp%mos%new(2*(i-1)+j)%matrix, &
+                                 name="mos_old"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
+               CALL cp_fm_create(rtp%mos%new(2*(i - 1) + j)%matrix, &
                                  matrix_struct=mos(i)%mo_set%mo_coeff%matrix_struct, &
-                                 name="mos_new"//TRIM(ADJUSTL(cp_to_string(2*(i-1)+j))))
-               CALL cp_fm_create(rtp%mos%next(2*(i-1)+j)%matrix, &
+                                 name="mos_new"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
+               CALL cp_fm_create(rtp%mos%next(2*(i - 1) + j)%matrix, &
                                  matrix_struct=mos(i)%mo_set%mo_coeff%matrix_struct, &
-                                 name="mos_next"//TRIM(ADJUSTL(cp_to_string(2*(i-1)+j))))
+                                 name="mos_next"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
                IF (dft_control%do_admm) THEN
-                  NULLIFY (rtp%mos%admm(2*(i-1)+j)%matrix)
-                  CALL cp_fm_create(rtp%mos%admm(2*(i-1)+j)%matrix, &
+                  NULLIFY (rtp%mos%admm(2*(i - 1) + j)%matrix)
+                  CALL cp_fm_create(rtp%mos%admm(2*(i - 1) + j)%matrix, &
                                     matrix_struct=mos_aux(i)%mo_set%mo_coeff%matrix_struct, &
-                                    name="mos_admm"//TRIM(ADJUSTL(cp_to_string(2*(i-1)+j))))
+                                    name="mos_admm"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
                END IF
             END DO
          END DO
@@ -312,7 +303,7 @@ CONTAINS
       rtp%iter = 0
       rtp%do_hfx = .FALSE.
       rtp%track_imag = .FALSE.
-      NULLIFY(rtp%rtm)
+      NULLIFY (rtp%rtm)
 
    END SUBROUTINE rt_prop_create
 
@@ -343,6 +334,7 @@ CONTAINS
 !> \param SinvH ...
 !> \param SinvB ...
 !> \param admm_mos ...
+!> \param rtm ...
 ! **************************************************************************************************
    SUBROUTINE get_rtp(rtp, exp_H_old, exp_H_new, H_last_iter, rho_old, rho_next, rho_new, mos, mos_new, mos_old, mos_next, &
                       S_inv, S_half, S_minus_half, B_mat, C_mat, propagator_matrix, mixing, mixing_factor, &
@@ -368,7 +360,7 @@ CONTAINS
          POINTER                                         :: SinvH, SinvB
       TYPE(cp_fm_p_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: admm_mos
-      TYPE(rt_moments_type), POINTER, OPTIONAL           :: rtm
+      TYPE(rt_moments_type), OPTIONAL, POINTER           :: rtm
 
       CHARACTER(len=*), PARAMETER :: routineN = 'get_rtp', routineP = moduleN//':'//routineN
 
@@ -459,7 +451,7 @@ CONTAINS
 
       IF (ASSOCIATED(rtp%rtm)) THEN
          CALL rt_moments_release(rtp%rtm)
-         DEALLOCATE(rtp%rtm)
+         DEALLOCATE (rtp%rtm)
       ENDIF
 
    END SUBROUTINE rt_prop_release
@@ -551,50 +543,52 @@ CONTAINS
 
    END SUBROUTINE rtp_history_release
 
-
 ! **************************************************************************************************
 !> \brief ...
 !> \param rtm ...
-!> \param imput ...
+!> \param input ...
 !> \param template ...
+!> \param sab_orb ...
+!> \param sab_all ...
 ! **************************************************************************************************
    SUBROUTINE rt_moments_create(rtm, input, template, sab_orb, sab_all)
       TYPE(rt_moments_type), POINTER                     :: rtm
       TYPE(section_vals_type), POINTER                   :: input
       TYPE(dbcsr_type), POINTER                          :: template
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-         POINTER                                         :: sab_all, sab_orb
+         POINTER                                         :: sab_orb, sab_all
 
       CHARACTER(len=*), PARAMETER :: routineN = 'rt_moments_create', &
          routineP = moduleN//':'//routineN
 
-      INTEGER                                            :: moments_max_order, nm, nmom, index
-      LOGICAL                                            :: calc_elmom, calc_elmom_berry, calc_magmom,&
-                                                            calc_momentum, calc_com_rVnl, calc_com_rxrVnl
+      INTEGER                                            :: index, moments_max_order, nm, nmom
+      LOGICAL                                            :: calc_com_rVnl, calc_com_rxrVnl, &
+                                                            calc_elmom, calc_elmom_berry, &
+                                                            calc_magmom, calc_momentum
 
       calc_elmom = .TRUE.
       moments_max_order = section_get_ival(section_vals=input, &
-                                   keyword_name="DFT%PRINT%MOMENTS%MAX_MOMENT")
+                                           keyword_name="DFT%PRINT%MOMENTS%MAX_MOMENT")
       calc_elmom_berry = section_get_lval(section_vals=input, &
-                                     keyword_name="DFT%PRINT%MOMENTS%PERIODIC")
+                                          keyword_name="DFT%PRINT%MOMENTS%PERIODIC")
       calc_magmom = section_get_lval(section_vals=input, &
                                      keyword_name="DFT%PRINT%MOMENTS%MAGNETIC")
       calc_momentum = section_get_lval(section_vals=input, &
-                                    keyword_name="DFT%PRINT%MOMENTS%LIN_MOM")
+                                       keyword_name="DFT%PRINT%MOMENTS%LIN_MOM")
       calc_com_rVnl = section_get_lval(section_vals=input, &
                                        keyword_name="DFT%PRINT%MOMENTS%COM_NONLOC")
       calc_com_rxrVnl = section_get_lval(section_vals=input, &
-                                           keyword_name="DFT%PRINT%MOMENTS%ANG_MOM_COM_NL")
-      
-      nmom = MIN(moments_max_order, current_maxl)
-      nm = (6+11*nmom+6*nmom**2+nmom**3)/6-1
+                                         keyword_name="DFT%PRINT%MOMENTS%ANG_MOM_COM_NL")
 
-      NULLIFY(rtm%el_moments)
+      nmom = MIN(moments_max_order, current_maxl)
+      nm = (6 + 11*nmom + 6*nmom**2 + nmom**3)/6 - 1
+
+      NULLIFY (rtm%el_moments)
       NULLIFY (rtm%cosmat, rtm%sinmat)
-      NULLIFY(rtm%magdipole_moment)
-      NULLIFY(rtm%momentum)
-      NULLIFY(rtm%com_rVnl)
-      NULLIFY(rtm%com_rxrVnl)
+      NULLIFY (rtm%magdipole_moment)
+      NULLIFY (rtm%momentum)
+      NULLIFY (rtm%com_rVnl)
+      NULLIFY (rtm%com_rxrVnl)
 
       IF (calc_elmom) THEN
          CALL dbcsr_allocate_matrix_set(rtm%el_moments, nm)
@@ -622,8 +616,8 @@ CONTAINS
          CALL dbcsr_allocate_matrix_set(rtm%magdipole_moment, 3)
          DO index = 1, SIZE(rtm%magdipole_moment)
             CALL dbcsr_init_p(rtm%magdipole_moment(index)%matrix)
-            CALL dbcsr_create(rtm%magdipole_moment(index)%matrix, template = template,&
-                              matrix_type = dbcsr_type_antisymmetric)
+            CALL dbcsr_create(rtm%magdipole_moment(index)%matrix, template=template, &
+                              matrix_type=dbcsr_type_antisymmetric)
             CALL cp_dbcsr_alloc_block_from_nbl(rtm%magdipole_moment(index)%matrix, sab_orb)
          ENDDO
       ENDIF
@@ -632,8 +626,8 @@ CONTAINS
          CALL dbcsr_allocate_matrix_set(rtm%momentum, 3)
          DO index = 1, SIZE(rtm%momentum)
             CALL dbcsr_init_p(rtm%momentum(index)%matrix)
-            CALL dbcsr_create(rtm%momentum(index)%matrix, template = template,&
-                              matrix_type = dbcsr_type_antisymmetric)
+            CALL dbcsr_create(rtm%momentum(index)%matrix, template=template, &
+                              matrix_type=dbcsr_type_antisymmetric)
             CALL cp_dbcsr_alloc_block_from_nbl(rtm%momentum(index)%matrix, sab_orb)
          ENDDO
       ENDIF
@@ -642,8 +636,8 @@ CONTAINS
          CALL dbcsr_allocate_matrix_set(rtm%com_rVnl, 3)
          DO index = 1, SIZE(rtm%com_rVnl)
             CALL dbcsr_init_p(rtm%com_rVnl(index)%matrix)
-            CALL dbcsr_create(rtm%com_rVnl(index)%matrix, template = template,&
-                              matrix_type = dbcsr_type_no_symmetry)
+            CALL dbcsr_create(rtm%com_rVnl(index)%matrix, template=template, &
+                              matrix_type=dbcsr_type_no_symmetry)
             CALL cp_dbcsr_alloc_block_from_nbl(rtm%com_rVnl(index)%matrix, sab_all)
          ENDDO
       ENDIF
@@ -652,8 +646,8 @@ CONTAINS
          CALL dbcsr_allocate_matrix_set(rtm%com_rxrVnl, 3)
          DO index = 1, SIZE(rtm%com_rxrVnl)
             CALL dbcsr_init_p(rtm%com_rxrVnl(index)%matrix)
-            CALL dbcsr_create(rtm%com_rxrVnl(index)%matrix, template = template,&
-                              matrix_type = dbcsr_type_no_symmetry)
+            CALL dbcsr_create(rtm%com_rxrVnl(index)%matrix, template=template, &
+                              matrix_type=dbcsr_type_no_symmetry)
             CALL cp_dbcsr_alloc_block_from_nbl(rtm%com_rxrVnl(index)%matrix, sab_all)
          ENDDO
       ENDIF
@@ -673,14 +667,11 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE get_rtm(rtm, el_moments, sinmat, cosmat, magdipole_moment, momentum, com_rVnl, com_rxrVnl)
 
-      TYPE(rt_moments_type), POINTER                      :: rtm
-      TYPE(dbcsr_p_type), POINTER, DIMENSION(:), OPTIONAL :: el_moments
-      TYPE(dbcsr_p_type), POINTER, DIMENSION(:), OPTIONAL :: sinmat
-      TYPE(dbcsr_p_type), POINTER, DIMENSION(:), OPTIONAL :: cosmat
-      TYPE(dbcsr_p_type), POINTER, DIMENSION(:), OPTIONAL :: magdipole_moment
-      TYPE(dbcsr_p_type), POINTER, DIMENSION(:), OPTIONAL :: momentum
-      TYPE(dbcsr_p_type), POINTER, DIMENSION(:), OPTIONAL :: com_rVnl
-      TYPE(dbcsr_p_type), POINTER, DIMENSION(:), OPTIONAL :: com_rxrVnl
+      TYPE(rt_moments_type), POINTER                     :: rtm
+      TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
+         POINTER                                         :: el_moments, sinmat, cosmat, &
+                                                            magdipole_moment, momentum, com_rVnl, &
+                                                            com_rxrVnl
 
       CHARACTER(len=*), PARAMETER :: routineN = 'get_rtm', routineP = moduleN//':'//routineN
 
@@ -703,7 +694,8 @@ CONTAINS
    SUBROUTINE rt_moments_release(rtm)
       TYPE(rt_moments_type), INTENT(inout)               :: rtm
 
-      CHARACTER(len=*), PARAMETER :: routineN = 'rt_moments_release', routineP = moduleN//':'//routineN
+      CHARACTER(len=*), PARAMETER :: routineN = 'rt_moments_release', &
+         routineP = moduleN//':'//routineN
 
       IF (ASSOCIATED(rtm%el_moments)) CALL dbcsr_deallocate_matrix_set(rtm%el_moments)
       IF (ASSOCIATED(rtm%sinmat)) CALL dbcsr_deallocate_matrix_set(rtm%sinmat)

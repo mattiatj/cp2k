@@ -67,10 +67,10 @@ MODULE rt_propagation
    USE rt_propagation_methods,          ONLY: propagation_step
    USE rt_propagation_output,           ONLY: rt_prop_output
    USE rt_propagation_types,            ONLY: get_rtp,&
+                                              rt_moments_create,&
                                               rt_prop_create,&
                                               rt_prop_type,&
-                                              rtp_history_create, &
-                                              rt_moments_create
+                                              rtp_history_create
    USE rt_propagation_utils,            ONLY: calc_S_derivs,&
                                               calc_update_rho,&
                                               calc_update_rho_sparse,&
@@ -103,8 +103,11 @@ CONTAINS
 
       INTEGER                                            :: aspc_order
       LOGICAL                                            :: lin_mom, magnetic_moment, store_moments
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(global_environment_type), POINTER             :: globenv
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_all, sab_orb
       TYPE(qs_energy_type), POINTER                      :: energy
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(rt_prop_type), POINTER                        :: rtp
@@ -112,10 +115,6 @@ CONTAINS
       TYPE(section_vals_type), POINTER                   :: hfx_sections, input, ls_scf_section, &
                                                             md_section, motion_section, &
                                                             print_moments_section
-      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-         POINTER                                         :: sab_all, sab_orb
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
-
 
       NULLIFY (qs_env, rtp_control, dft_control)
 
@@ -176,10 +175,10 @@ CONTAINS
       CALL init_propagators(qs_env)
       IF (rtp_control%fixed_ions) THEN
          IF (store_moments) THEN
-            NULLIFY(matrix_s, sab_all, sab_orb)
-            CALL get_qs_env(qs_env, matrix_s=matrix_s, sab_orb = sab_orb, sab_all = sab_all)
-            NULLIFY(qs_env%rtp%rtm)
-            ALLOCATE(qs_env%rtp%rtm)
+            NULLIFY (matrix_s, sab_all, sab_orb)
+            CALL get_qs_env(qs_env, matrix_s=matrix_s, sab_orb=sab_orb, sab_all=sab_all)
+            NULLIFY (qs_env%rtp%rtm)
+            ALLOCATE (qs_env%rtp%rtm)
             CALL rt_moments_create(qs_env%rtp%rtm, input, matrix_s(1)%matrix, sab_orb, sab_all)
             CALL moment_matrices_ao_basis(qs_env%rtp%rtm, qs_env)
          ENDIF
@@ -238,7 +237,7 @@ CONTAINS
                ENDIF
             ELSE
                DO i = 1, SIZE(mos)
-                  CALL cp_fm_to_fm(mos(i)%mo_set%mo_coeff, mos_old(2*i-1)%matrix)
+                  CALL cp_fm_to_fm(mos(i)%mo_set%mo_coeff, mos_old(2*i - 1)%matrix)
                   CALL cp_fm_set_all(mos_old(2*i)%matrix, zero, zero)
                END DO
             ENDIF
@@ -261,7 +260,7 @@ CONTAINS
                !The wavefunction was minimized using a linear scaling method. The density matrix is therefore taken from the ls_scf_env.
                CALL get_rtp(rtp=rtp, rho_old=rho_old, rho_new=rho_new)
                DO ispin = 1, SIZE(rho_old)/2
-                  re = 2*ispin-1
+                  re = 2*ispin - 1
                   CALL dbcsr_copy(rho_old(re)%matrix, qs_env%ls_scf_env%matrix_p(ispin))
                   CALL dbcsr_copy(rho_new(re)%matrix, qs_env%ls_scf_env%matrix_p(ispin))
                END DO
@@ -314,7 +313,7 @@ CONTAINS
       CALL get_qs_env(qs_env=qs_env, dft_control=dft_control, rtp=rtp, energy=energy)
 
       rtp_control => dft_control%rtp_control
-      max_steps = MIN(rtp%i_start+rtp%nsteps, rtp%max_steps)
+      max_steps = MIN(rtp%i_start + rtp%nsteps, rtp%max_steps)
       max_iter = rtp_control%max_iter
       eps_ener = rtp_control%eps_ener
 
@@ -326,20 +325,20 @@ CONTAINS
       CALL cp_iterate(logger%iter_info, iter_nr=0)
       IF (rtp%i_start >= max_steps) CALL cp_abort(__LOCATION__, &
                                                   "maximum step number smaller than initial step value")
-      DO i_step = rtp%i_start+1, max_steps
+      DO i_step = rtp%i_start + 1, max_steps
          energy%efield_core = 0.0_dp
          qs_env%sim_time = REAL(i_step, dp)*rtp%dt
          CALL get_qs_env(qs_env, pw_env=pw_env)
          pw_env%poisson_env%parameters%dbc_params%time = qs_env%sim_time
          qs_env%sim_step = i_step
-         rtp%istep = i_step-rtp%i_start
+         rtp%istep = i_step - rtp%i_start
          CALL calculate_ecore_efield(qs_env, .FALSE.)
          CALL external_c_potential(qs_env, calculate_forces=.FALSE.)
          CALL external_e_potential(qs_env)
          CALL cp_iterate(logger%iter_info, last=(i_step == max_steps), iter_nr=i_step)
          rtp%converged = .FALSE.
          DO i_iter = 1, max_iter
-            IF (i_step == rtp%i_start+1 .AND. i_iter == 2 .AND. rtp_control%hfx_redistribute) &
+            IF (i_step == rtp%i_start + 1 .AND. i_iter == 2 .AND. rtp_control%hfx_redistribute) &
                CALL qs_ks_did_change(qs_env%ks_env, s_mstruct_changed=.TRUE.)
             rtp%iter = i_iter
             CALL propagation_step(qs_env, rtp, rtp_control)
@@ -352,7 +351,7 @@ CONTAINS
             CALL external_control(should_stop, "MD", globenv=globenv)
             IF (should_stop) CALL cp_iterate(logger%iter_info, last=.TRUE., iter_nr=i_step)
             time_iter_stop = m_walltime()
-            used_time = time_iter_stop-time_iter_start
+            used_time = time_iter_stop - time_iter_start
             time_iter_start = time_iter_stop
             CALL rt_prop_output(qs_env, real_time_propagation, delta_iter=rtp%delta_iter, used_time=used_time)
             CALL rt_write_input_restart(force_env=force_env)
@@ -425,10 +424,10 @@ CONTAINS
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(section_vals_type), POINTER                   :: input
-      
+
       NULLIFY (matrix_s, dft_control, input)
 
-      CALL get_qs_env(qs_env, dft_control=dft_control, input = input)
+      CALL get_qs_env(qs_env, dft_control=dft_control, input=input)
 
       SELECT CASE (rtp_control%initial_wfn)
       CASE (use_scf_wfn)
