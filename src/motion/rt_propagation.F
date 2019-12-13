@@ -490,9 +490,6 @@ CONTAINS
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(rt_prop_type), POINTER                        :: rtp
 
-!, i
-! REAL(KIND=dp), DIMENSION(:, :), POINTER            :: local_data
-
       CALL timeset(routineN, handle)
 
       NULLIFY (matrix_ks, matrix_s, rtp, dft_control)

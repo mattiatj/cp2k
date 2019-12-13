@@ -56,13 +56,8 @@ MODULE qs_moments
         dbcsr_distribution_type, dbcsr_dot, dbcsr_get_block_p, dbcsr_get_info, &
         dbcsr_get_matrix_type, dbcsr_hadamard_product, dbcsr_init_p, dbcsr_iterator_blocks_left, &
         dbcsr_iterator_next_block, dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, &
-<<<<<<< HEAD
         dbcsr_multiply, dbcsr_p_type, dbcsr_set, dbcsr_setname, dbcsr_trace, dbcsr_transposed, &
         dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, dbcsr_type_symmetric
-=======
-        dbcsr_multiply, dbcsr_p_type, dbcsr_set, dbcsr_trace, dbcsr_transposed, dbcsr_type, &
-        dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, dbcsr_type_symmetric
->>>>>>> prettify
    USE distribution_1d_types,           ONLY: distribution_1d_type
    USE kinds,                           ONLY: default_string_length,&
                                               dp
