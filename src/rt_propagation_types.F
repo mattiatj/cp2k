@@ -84,8 +84,8 @@ MODULE rt_propagation_types
       TYPE(dbcsr_type), POINTER                 :: S_half
       TYPE(dbcsr_type), POINTER                 :: S_minus_half
       TYPE(dbcsr_type), POINTER                 :: B_mat
-      TYPE(dbcsr_type), POINTER                 :: gs_evecs
-      TYPE(dbcsr_type), POINTER                 :: gs_evecs_inv
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)  :: gs_evecs
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)  :: gs_evecs_inv
       TYPE(dbcsr_p_type), POINTER, DIMENSION(:)  :: C_mat
       TYPE(dbcsr_p_type), POINTER, DIMENSION(:)  :: S_der
       TYPE(dbcsr_p_type), POINTER, DIMENSION(:)  :: SinvH
@@ -116,8 +116,8 @@ MODULE rt_propagation_types
       REAL(KIND=dp)                               :: lanzcos_threshold
       INTEGER                                     :: newton_schulz_order
       LOGICAL                                     :: linear_scaling
-      TYPE(cp_fm_type), POINTER                 :: gs_evecs_fm
-      TYPE(cp_fm_type), POINTER                 :: gs_evecs_inv_fm
+      ! TYPE(cp_fm_type), POINTER                 :: gs_evecs_fm
+      ! TYPE(cp_fm_type), POINTER                 :: gs_evecs_inv_fm
    END TYPE rt_prop_type
 
 ! *** Public data types ***
@@ -291,15 +291,14 @@ CONTAINS
       rtp%track_imag_density = .FALSE.
 
       NULLIFY (rtp%gs_evecs, rtp%gs_evecs_inv)
-      ALLOCATE (rtp%gs_evecs, rtp%gs_evecs_inv)
-      CALL dbcsr_create(rtp%gs_evecs, template=template, matrix_type="N")
-      CALL dbcsr_create(rtp%gs_evecs_inv, template=template, matrix_type="N")
-
-      NULLIFY (rtp%gs_evecs_fm, rtp%gs_evecs_inv_fm)
-      IF (.NOT. rtp%linear_scaling) THEN
-         CALL cp_fm_create(rtp%gs_evecs_fm, matrix_struct=rtp%ao_ao_fmstruct, name="gs evecs fm")
-         CALL cp_fm_create(rtp%gs_evecs_inv_fm, matrix_struct=rtp%ao_ao_fmstruct, name="gs evecs inv fm")
-      ENDIF
+      CALL dbcsr_allocate_matrix_set(rtp%gs_evecs, nspin)
+      CALL dbcsr_allocate_matrix_set(rtp%gs_evecs_inv, nspin)
+      DO i = 1, nspin
+         CALL dbcsr_init_p(rtp%gs_evecs(i)%matrix)
+         CALL dbcsr_create(rtp%gs_evecs(i)%matrix, template=template, matrix_type="N")
+         CALL dbcsr_init_p(rtp%gs_evecs_inv(i)%matrix)
+         CALL dbcsr_create(rtp%gs_evecs_inv(i)%matrix, template=template, matrix_type="N")
+      END DO
 
    END SUBROUTINE rt_prop_create
 
@@ -332,14 +331,11 @@ CONTAINS
 !> \param admm_mos ...
 !> \param gs_evecs ...
 !> \param gs_evecs_inv ...
-!> \param gs_evecs_fm ...
-!> \param gs_evecs_inv_fm ...
 !> \param ao_ao_fmstruct ...
 ! **************************************************************************************************
    SUBROUTINE get_rtp(rtp, exp_H_old, exp_H_new, H_last_iter, rho_old, rho_next, rho_new, mos, mos_new, mos_old, mos_next, &
                       S_inv, S_half, S_minus_half, B_mat, C_mat, propagator_matrix, mixing, mixing_factor, &
-                      S_der, dt, nsteps, SinvH, SinvB, admm_mos, gs_evecs, gs_evecs_inv, gs_evecs_fm, gs_evecs_inv_fm, &
-                      ao_ao_fmstruct)
+                      S_der, dt, nsteps, SinvH, SinvB, admm_mos, gs_evecs, gs_evecs_inv, ao_ao_fmstruct)
 
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
@@ -361,8 +357,8 @@ CONTAINS
          POINTER                                         :: SinvH, SinvB
       TYPE(cp_fm_p_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: admm_mos
-      TYPE(dbcsr_type), OPTIONAL, POINTER                :: gs_evecs, gs_evecs_inv
-      TYPE(cp_fm_type), OPTIONAL, POINTER                :: gs_evecs_fm, gs_evecs_inv_fm
+      TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
+         POINTER                                         :: gs_evecs, gs_evecs_inv
       TYPE(cp_fm_struct_type), OPTIONAL, POINTER         :: ao_ao_fmstruct
 
       CPASSERT(ASSOCIATED(rtp))
@@ -396,8 +392,8 @@ CONTAINS
 
       IF (PRESENT(gs_evecs)) gs_evecs => rtp%gs_evecs
       IF (PRESENT(gs_evecs_inv)) gs_evecs_inv => rtp%gs_evecs_inv
-      IF (PRESENT(gs_evecs_fm)) gs_evecs_fm => rtp%gs_evecs_fm
-      IF (PRESENT(gs_evecs_inv_fm)) gs_evecs_inv_fm => rtp%gs_evecs_inv_fm
+      ! IF (PRESENT(gs_evecs_fm)) gs_evecs_fm => rtp%gs_evecs_fm
+      ! IF (PRESENT(gs_evecs_inv_fm)) gs_evecs_inv_fm => rtp%gs_evecs_inv_fm
 
       IF (PRESENT(ao_ao_fmstruct)) ao_ao_fmstruct => rtp%ao_ao_fmstruct
 
@@ -452,13 +448,17 @@ CONTAINS
       DEALLOCATE (rtp%orders)
       IF (.NOT. rtp%linear_scaling) CALL cp_fm_struct_release(rtp%ao_ao_fmstruct)
 
-      CALL dbcsr_deallocate_matrix(rtp%gs_evecs)
-      CALL dbcsr_deallocate_matrix(rtp%gs_evecs_inv)
+      IF (ASSOCIATED(rtp%gs_evecs)) THEN
+         CALL dbcsr_deallocate_matrix_set(rtp%gs_evecs)
+      END IF
+      IF (ASSOCIATED(rtp%gs_evecs_inv)) THEN
+         CALL dbcsr_deallocate_matrix_set(rtp%gs_evecs_inv)
+      END IF
 
-      IF (.NOT. rtp%linear_scaling) THEN
-         CALL cp_fm_release(rtp%gs_evecs_fm)
-         CALL cp_fm_release(rtp%gs_evecs_inv_fm)
-      ENDIF
+      ! IF (.NOT. rtp%linear_scaling) THEN
+      !    CALL cp_fm_release(rtp%gs_evecs_fm)
+      !    CALL cp_fm_release(rtp%gs_evecs_inv_fm)
+      ! ENDIF
 
    END SUBROUTINE rt_prop_release
 

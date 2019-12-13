@@ -2335,9 +2335,9 @@ CONTAINS
                                                             nm, nmo, nvirt
       REAL(dp), DIMENSION(3)                             :: rcc
       TYPE(cp_para_env_type), POINTER                    :: para_env
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, moments, moments_mo, &
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: gs_evecs, matrix_s, moments, moments_mo, &
                                                             pair_dip_moments, rho_ao, rho_mopair
-      TYPE(dbcsr_type), POINTER                          :: gs_evecs, rho_transpose, tmp_transpose2
+      TYPE(dbcsr_type), POINTER                          :: rho_transpose, tmp_transpose2
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
       TYPE(qs_rho_type), POINTER                         :: rho
@@ -2377,7 +2377,8 @@ CONTAINS
 
       DO ispin = 1, SIZE(rho_mopair)
          CALL dbcsr_init_p(rho_mopair(ispin)%matrix)
-         CALL dbcsr_copy(rho_mopair(ispin)%matrix, rho_ao(1)%matrix)
+         CALL dbcsr_create(rho_mopair(ispin)%matrix, template=rho_ao(1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
          CALL dbcsr_set(rho_mopair(ispin)%matrix, 0.0_dp)
       ENDDO
       CALL calc_ev_transform_rho(qs_env, rho_mopair)
@@ -2425,19 +2426,9 @@ CONTAINS
       NULLIFY (gs_evecs)
       CALL get_rtp(qs_env%rtp, gs_evecs=gs_evecs)
       DO idir = 1, 3
-         CALL dbcsr_multiply("N", "N", 1.0_dp, moments(idir)%matrix, gs_evecs, 0.0_dp, tmp_transpose2)
-         CALL dbcsr_multiply("T", "N", 1.0_dp, gs_evecs, tmp_transpose2, 0.0_dp, moments_mo(idir)%matrix)
+         CALL dbcsr_multiply("N", "N", 1.0_dp, moments(idir)%matrix, gs_evecs(1)%matrix, 0.0_dp, tmp_transpose2)
+         CALL dbcsr_multiply("T", "N", 1.0_dp, gs_evecs(1)%matrix, tmp_transpose2, 0.0_dp, moments_mo(idir)%matrix)
       ENDDO
-
-      ! get pair dipole moments
-      ! fm
-      ! NULLIFY(results)
-      ! ALLOCATE(results(3))
-      ! DO idir = 1, 3
-      !   CALL cp_fm_create(results(idir)%matrix, matrix_struct = rtp%ao_ao_fmstruct,&
-      !                     name="PAIR DIP MOM "//TRIM(rlab(idir+1))//"-DIR")
-      !   CALL cp_fm_set_all(results(idir)%matrix, 0._dp)
-      ! ENDDO
 
       NULLIFY (mos)
       CALL get_qs_env(qs_env, mos=mos)
@@ -2454,13 +2445,10 @@ CONTAINS
             CALL dbcsr_transposed(tmp_transpose2, pair_dip_moments(idir)%matrix)
             CALL dbcsr_add(pair_dip_moments(idir)%matrix, tmp_transpose2, 1.0_dp, 1.0_dp)
 
-            ! CALL cp_fm_get_info(result, local_data = local_data_test, nrow_global = nrow_global)
-            ! DO i = 1, nrow_global
-            !   WRITE(*,*) local_data_test(i,:)
-            ! ENDDO
+            CALL cp_dbcsr_write_sparse_matrix_dp(pair_dip_moments(idir)%matrix, 5, 8, qs_env, para_env, nmo + 1, &
+                                                 nao, 1, nmo, output_unit=unit_number, omit_headers=.TRUE.)
 
          ENDDO
-
       ENDDO
 
       CALL dbcsr_deallocate_matrix_set(rho_mopair)
@@ -2469,18 +2457,11 @@ CONTAINS
       CALL dbcsr_deallocate_matrix(rho_transpose)
       CALL dbcsr_deallocate_matrix(tmp_transpose2)
 
-      DO idir = 1, 3
-         ! CALL copy_dbcsr_to_fm(pair_dip_moments(idir)%matrix, results(idir)%matrix)
-
-         CALL cp_dbcsr_write_sparse_matrix_dp(pair_dip_moments(idir)%matrix, 5, 8, qs_env, para_env, nmo + 1, nao, 1, nmo, &
-                                              output_unit=unit_number, omit_headers=.TRUE.)
-
-      ENDDO
+      ! DO idir = 1, 3
+      ! CALL copy_dbcsr_to_fm(pair_dip_moments(idir)%matrix, results(idir)%matrix)
+      ! ENDDO
 
       CALL dbcsr_deallocate_matrix_set(pair_dip_moments)
-
-      ! fm stuff deallocate
-      ! CALL cp_fm_vect_dealloc(results)
 
       DEALLOCATE (rlab)
 
@@ -2502,17 +2483,18 @@ CONTAINS
          routineP = moduleN//':'//routineN
 
       INTEGER                                            :: handle, ispin
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: rho_ao
-      TYPE(dbcsr_type), POINTER                          :: gs_evecs_inv, tmp
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: gs_evecs_inv, matrix_s, rho_ao
+      TYPE(dbcsr_type), POINTER                          :: tmp
       TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(rt_prop_type), POINTER                        :: rtp
 
       CALL timeset(routineN, handle)
 
-      NULLIFY (rtp, rho)
+      NULLIFY (rtp, rho, matrix_s)
       CALL get_qs_env(qs_env, &
                       rho=rho, &
-                      rtp=rtp)
+                      rtp=rtp, &
+                      matrix_s=matrix_s)
 
       NULLIFY (rho_ao, gs_evecs_inv)
 
@@ -2524,8 +2506,8 @@ CONTAINS
       CALL dbcsr_create(tmp, template=rho_ao(1)%matrix, matrix_type=dbcsr_type_no_symmetry)
 
       DO ispin = 1, SIZE(rho_ao)
-         CALL dbcsr_multiply("N", "T", 1.0_dp, rho_ao(ispin)%matrix, gs_evecs_inv, 0.0_dp, tmp)
-         CALL dbcsr_multiply("N", "N", 1.0_dp, gs_evecs_inv, tmp, 0.0_dp, rho_mopair(ispin)%matrix)
+         CALL dbcsr_multiply("N", "T", 1.0_dp, rho_ao(ispin)%matrix, gs_evecs_inv(ispin)%matrix, 0.0_dp, tmp)
+         CALL dbcsr_multiply("N", "N", 1.0_dp, gs_evecs_inv(ispin)%matrix, tmp, 0.0_dp, rho_mopair(ispin)%matrix)
       ENDDO
 
       CALL dbcsr_deallocate_matrix(tmp)

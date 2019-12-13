@@ -481,22 +481,21 @@ CONTAINS
       CHARACTER(len=*), PARAMETER :: routineN = 'calc_gs_eigenvectors', &
          routineP = moduleN//':'//routineN
 
-      INTEGER                                            :: handle, nrow_global
+      INTEGER                                            :: handle, ispin, nrow_global
       REAL(kind=dp), DIMENSION(:), POINTER               :: eigenvalues
       TYPE(cp_fm_struct_type), POINTER                   :: fm_struct
       TYPE(cp_fm_type), POINTER                          :: eigenvectors, eigenvectors_inv, mat_ks, &
                                                             S_chol
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_ks, matrix_s
+      TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(rt_prop_type), POINTER                        :: rtp
-
-!, i
-! REAL(KIND=dp), DIMENSION(:, :), POINTER            :: local_data
 
       CALL timeset(routineN, handle)
 
-      NULLIFY (matrix_ks, matrix_s, rtp)
+      NULLIFY (matrix_ks, matrix_s, rtp, dft_control)
 
       CALL get_qs_env(qs_env, &
+                      dft_control=dft_control, &
                       matrix_ks=matrix_ks, &
                       matrix_s=matrix_s, &
                       rtp=rtp)
@@ -505,40 +504,40 @@ CONTAINS
       CALL get_rtp(rtp, ao_ao_fmstruct=fm_struct)
 
       ! Create fm matrices
-      NULLIFY (S_chol, eigenvectors, mat_ks, eigenvectors_inv, eigenvalues)
+      NULLIFY (S_chol, eigenvectors, eigenvectors_inv, mat_ks)
       CALL cp_fm_create(S_chol, matrix_struct=fm_struct, name='Cholesky')
+      CALL cp_fm_create(eigenvectors, matrix_struct=fm_struct, name="gs evecs fm")
+      CALL cp_fm_create(eigenvectors_inv, matrix_struct=fm_struct, name="gs evecs inv fm")
       CALL cp_fm_create(mat_ks, matrix_struct=fm_struct, name='KS matrix')
 
+      NULLIFY (eigenvalues)
       CALL cp_fm_get_info(mat_ks, nrow_global=nrow_global)
       ALLOCATE (eigenvalues(nrow_global))
 
-      CALL get_rtp(rtp, gs_evecs_fm=eigenvectors)
-
-      ! diagonalize KS matrix in AO basis using Cholesky decomp. of S
       CALL copy_dbcsr_to_fm(matrix_s(1)%matrix, S_chol)
       CALL cp_fm_cholesky_decompose(S_chol)
-      CALL copy_dbcsr_to_fm(matrix_ks(1)%matrix, mat_ks)
-      CALL cp_fm_cholesky_reduce(mat_ks, S_chol)
-      CALL cp_fm_syevd(mat_ks, eigenvectors, eigenvalues)
-      CALL cp_fm_triangular_multiply(S_chol, eigenvectors, invert_tr=.TRUE.)
 
-      ! invert eigenvectors
-      NULLIFY (eigenvectors_inv)
-      CALL get_rtp(rtp, gs_evecs_inv_fm=eigenvectors_inv)
-      CALL cp_fm_invert(eigenvectors, eigenvectors_inv)
+      DO ispin = 1, dft_control%nspins
+         ! diagonalize KS matrix in AO basis using Cholesky decomp. of S
+         CALL copy_dbcsr_to_fm(matrix_ks(ispin)%matrix, mat_ks)
+         CALL cp_fm_cholesky_reduce(mat_ks, S_chol)
+         CALL cp_fm_syevd(mat_ks, eigenvectors, eigenvalues)
+         CALL cp_fm_triangular_multiply(S_chol, eigenvectors, invert_tr=.TRUE.)
 
-      ! CALL cp_fm_get_info(eigenvectors_inv, local_data = local_data)
-      ! DO i = 1, nrow_global
-      !   WRITE(*,*) local_data(i,:)
-      ! ENDDO
+         ! invert eigenvectors
+         CALL cp_fm_invert(eigenvectors, eigenvectors_inv)
 
-      ! store as dbcsr matrices
-      CALL copy_fm_to_dbcsr(eigenvectors, rtp%gs_evecs)
-      CALL copy_fm_to_dbcsr(eigenvectors_inv, rtp%gs_evecs_inv)
+         ! store as dbcsr matrices in rtp environment
+         CALL copy_fm_to_dbcsr(eigenvectors, rtp%gs_evecs(ispin)%matrix)
+         CALL copy_fm_to_dbcsr(eigenvectors_inv, rtp%gs_evecs_inv(ispin)%matrix)
+
+      ENDDO
 
       ! Release fm matrices
       CALL cp_fm_release(S_chol)
       CALL cp_fm_release(mat_ks)
+      CALL cp_fm_release(eigenvectors)
+      CALL cp_fm_release(eigenvectors_inv)
 
       DEALLOCATE (eigenvalues)
 
