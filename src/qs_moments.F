@@ -56,8 +56,8 @@ MODULE qs_moments
         dbcsr_distribution_type, dbcsr_dot, dbcsr_get_block_p, dbcsr_get_info, &
         dbcsr_get_matrix_type, dbcsr_hadamard_product, dbcsr_init_p, dbcsr_iterator_blocks_left, &
         dbcsr_iterator_next_block, dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, &
-        dbcsr_multiply, dbcsr_p_type, dbcsr_set, dbcsr_trace, dbcsr_transposed, dbcsr_type, &
-        dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, dbcsr_type_symmetric
+        dbcsr_multiply, dbcsr_p_type, dbcsr_set, dbcsr_setname, dbcsr_trace, dbcsr_transposed, &
+        dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, dbcsr_type_symmetric
    USE distribution_1d_types,           ONLY: distribution_1d_type
    USE kinds,                           ONLY: default_string_length,&
                                               dp
@@ -2330,22 +2330,21 @@ CONTAINS
       CHARACTER(LEN=*), PARAMETER :: routineN = 'calc_rtp_pair_moments', &
          routineP = moduleN//':'//routineN
 
+      CHARACTER(LEN=1)                                   :: spin
+      CHARACTER(LEN=36)                                  :: matrixname
       CHARACTER(LEN=8), ALLOCATABLE, DIMENSION(:)        :: rlab
       INTEGER                                            :: handle, idir, ispin, ix, iy, iz, nao, &
-                                                            nm, nmo, nvirt
+                                                            nm, nmo
       REAL(dp), DIMENSION(3)                             :: rcc
       TYPE(cp_para_env_type), POINTER                    :: para_env
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: gs_evecs, matrix_s, moments, moments_mo, &
-                                                            pair_dip_moments, rho_ao, rho_mopair
-      TYPE(dbcsr_type), POINTER                          :: rho_transpose, tmp_transpose2
+                                                            rho_ao, rho_mopair
+      TYPE(dbcsr_type), POINTER                          :: pair_dip_mom, rho_transpose, &
+                                                            tmp_transpose2
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
       TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(rt_prop_type), POINTER                        :: rtp
-
-!, i
-! REAL(KIND=dp), DIMENSION(:, :), POINTER              :: local_data_test
-! TYPE(cp_fm_p_type), DIMENSION(:), POINTER            :: results
 
       CALL timeset(routineN, handle)
 
@@ -2377,6 +2376,7 @@ CONTAINS
 
       DO ispin = 1, SIZE(rho_mopair)
          CALL dbcsr_init_p(rho_mopair(ispin)%matrix)
+         ! CALL dbcsr_copy(rho_mopair(ispin)%matrix, rho_ao(ispin)%matrix, "rho_mopair")
          CALL dbcsr_create(rho_mopair(ispin)%matrix, template=rho_ao(1)%matrix, &
                            matrix_type=dbcsr_type_no_symmetry)
          CALL dbcsr_set(rho_mopair(ispin)%matrix, 0.0_dp)
@@ -2404,6 +2404,11 @@ CONTAINS
                         matrix_type=dbcsr_type_no_symmetry)
       CALL dbcsr_set(tmp_transpose2, 0._dp)
 
+      NULLIFY (pair_dip_mom)
+      ALLOCATE (pair_dip_mom)
+      CALL dbcsr_create(pair_dip_mom, template=matrix_s(1)%matrix, matrix_type=dbcsr_type_no_symmetry)
+      CALL dbcsr_set(pair_dip_mom, 0._dp)
+
       ! project moments onto groundstate MOs
       NULLIFY (moments_mo)
       CALL dbcsr_allocate_matrix_set(moments_mo, nm)
@@ -2412,15 +2417,6 @@ CONTAINS
          CALL dbcsr_create(moments_mo(idir)%matrix, template=matrix_s(1)%matrix, &
                            matrix_type=dbcsr_type_no_symmetry)
          CALL dbcsr_set(moments_mo(idir)%matrix, 0._dp)
-      ENDDO
-
-      NULLIFY (pair_dip_moments)
-      CALL dbcsr_allocate_matrix_set(pair_dip_moments, nm)
-      DO idir = 1, 3
-         CALL dbcsr_init_p(pair_dip_moments(idir)%matrix)
-         CALL dbcsr_create(pair_dip_moments(idir)%matrix, template=matrix_s(1)%matrix, &
-                           matrix_type=dbcsr_type_no_symmetry, name="PAIR DIP MOM "//TRIM(rlab(idir + 1))//"-DIR")
-         CALL dbcsr_set(pair_dip_moments(idir)%matrix, 222._dp)
       ENDDO
 
       NULLIFY (gs_evecs)
@@ -2437,15 +2433,17 @@ CONTAINS
          CALL dbcsr_set(rho_transpose, 0._dp)
          CALL dbcsr_transposed(rho_transpose, rho_mopair(ispin)%matrix)
          CALL get_mo_set(mo_set=mos(ispin)%mo_set, nao=nao, nmo=nmo)
-         nvirt = nao - nmo
 
          DO idir = 1, nm
+            WRITE (spin, "(I1)") ispin
+            WRITE (matrixname, "(A)") "PAIR DIP MOM "//TRIM(rlab(idir + 1))//"-DIR, SPIN "//spin
+            CALL dbcsr_setname(pair_dip_mom, matrixname)
             CALL dbcsr_set(tmp_transpose2, 0._dp)
-            CALL dbcsr_hadamard_product(moments_mo(idir)%matrix, rho_transpose, pair_dip_moments(idir)%matrix)
-            CALL dbcsr_transposed(tmp_transpose2, pair_dip_moments(idir)%matrix)
-            CALL dbcsr_add(pair_dip_moments(idir)%matrix, tmp_transpose2, 1.0_dp, 1.0_dp)
+            CALL dbcsr_hadamard_product(moments_mo(idir)%matrix, rho_transpose, pair_dip_mom)
+            CALL dbcsr_transposed(tmp_transpose2, pair_dip_mom)
+            CALL dbcsr_add(pair_dip_mom, tmp_transpose2, 1.0_dp, 1.0_dp)
 
-            CALL cp_dbcsr_write_sparse_matrix_dp(pair_dip_moments(idir)%matrix, 5, 8, qs_env, para_env, nmo + 1, &
+            CALL cp_dbcsr_write_sparse_matrix_dp(pair_dip_mom, 5, 8, qs_env, para_env, nmo + 1, &
                                                  nao, 1, nmo, output_unit=unit_number, omit_headers=.TRUE.)
 
          ENDDO
@@ -2456,12 +2454,7 @@ CONTAINS
       CALL dbcsr_deallocate_matrix_set(moments_mo)
       CALL dbcsr_deallocate_matrix(rho_transpose)
       CALL dbcsr_deallocate_matrix(tmp_transpose2)
-
-      ! DO idir = 1, 3
-      ! CALL copy_dbcsr_to_fm(pair_dip_moments(idir)%matrix, results(idir)%matrix)
-      ! ENDDO
-
-      CALL dbcsr_deallocate_matrix_set(pair_dip_moments)
+      CALL dbcsr_deallocate_matrix(pair_dip_mom)
 
       DEALLOCATE (rlab)
 
