@@ -2281,7 +2281,7 @@ CONTAINS
             IF (nmom >= 1) THEN
                dd = SQRT(SUM(mmom(1:3)**2))
                WRITE (unit_number, "(T3,A)") "Orbital angular momentum [a.u.] incl. com_nl"
-               WRITE (unit_number, "(T5,3(A,A,F14.8,1X),T60,A,T67,F14.8)") &
+               WRITE (unit_number, "(T5,3(A,A,D22.12,1X),T80,A,T86,F14.8)") &
                   (TRIM(rlab(i + 1)), "=", mmom(i), i=1, 3), "Total=", dd
             END IF
          END IF
@@ -2291,13 +2291,13 @@ CONTAINS
                CASE (1)
                   dd = SQRT(SUM(rmom_vel(1:3)**2))
                   WRITE (unit_number, "(T3,A)") "Expectation value of momentum operator [a. u.] incl. com_nl"
-                  WRITE (unit_number, "(T5,3(A,A,F14.8,1X),T60,A,T67,F14.8)") &
+                  WRITE (unit_number, "(T5,3(A,A,D22.12,1X),T80,A,T86,F14.8)") &
                      (TRIM(rlab(i + 1)), "=", rmom_vel(i), i=1, 3), "Total=", dd
                CASE (2)
                   WRITE (unit_number, "(T3,A)") "Expectation value of quadrupole operator in vel. repr. [a. u.] incl. com_nl"
-                  WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
+                  WRITE (unit_number, "(T17,3(A,A,D22.12,9X))") &
                      (TRIM(rlab(i + 1)), "=", rmom_vel(i), i=4, 6)
-                  WRITE (unit_number, "(T17,3(A,A,F14.8,9X))") &
+                  WRITE (unit_number, "(T17,3(A,A,D22.12,9X))") &
                      (TRIM(rlab(i + 1)), "=", rmom_vel(i), i=7, 9)
                CASE DEFAULT
                END SELECT
