@@ -2094,11 +2094,11 @@ CONTAINS
             rmom_vel(4:9) = rmom_vel(4:9) + nlcom_rrv
          ENDIF
          IF (magnetic .AND. .NOT. my_velreprs) THEN
-            CALL print_moments_nl(unit_number, nmom, rlab, mmom)
+            CALL print_moments_nl(unit_number, nmom, rlab, mmom=mmom)
          ELSE IF (my_velreprs .AND. .NOT. magnetic) THEN
-            CALL print_moments_nl(unit_number, nmom, rlab, rmom_vel)
+            CALL print_moments_nl(unit_number, nmom, rlab, rmom_vel=rmom_vel)
          ELSE IF (my_velreprs .AND. magnetic) THEN
-            CALL print_moments_nl(unit_number, nmom, rlab, mmom, rmom_vel)
+            CALL print_moments_nl(unit_number, nmom, rlab, mmom=mmom, rmom_vel=rmom_vel)
          ENDIF
 
       ENDIF
@@ -2338,6 +2338,15 @@ CONTAINS
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(qs_rho_type), POINTER                         :: rho
 
+!, ncols ,i
+!, matrix_rv_old
+!, sab_orb
+
+      ! TYPE(rt_prop_type), POINTER                        :: rtp
+
+      ! REAL(KIND=dp), DIMENSION(:, :), POINTER            :: local_data
+      ! TYPE(cp_fm_type), POINTER                          :: toprint
+
       CALL timeset(routineN, handle)
 
       calc_rv = .FALSE.
@@ -2352,7 +2361,7 @@ CONTAINS
 
       IF (.NOT. (calc_rv .OR. calc_rrv .OR. calc_rxrv)) RETURN
 
-      NULLIFY (cell, matrix_s, particle_set, qs_kind_set, rho, sab_all, sap_ppnl)
+      NULLIFY (cell, matrix_s, particle_set, qs_kind_set, rho, sab_all, sap_ppnl) !, sab_orb)
       CALL get_qs_env(qs_env, &
                       cell=cell, &
                       dft_control=dft_control, &
@@ -2361,7 +2370,8 @@ CONTAINS
                       qs_kind_set=qs_kind_set, &
                       rho=rho, &
                       sab_all=sab_all, &
-                      sap_ppnl=sap_ppnl)
+                      sap_ppnl=sap_ppnl) !, &
+      ! sab_orb = sab_orb)
 
       eps_ppnl = dft_control%qs_control%eps_ppnl
 
@@ -2423,7 +2433,35 @@ CONTAINS
                                ref_point=ref_point, particle_set=particle_set, cell=cell)
       ENDIF
 
-      ! calculate expectation values
+      !compare to old commutator routineN
+      ! NULLIFY(matrix_rv_old)
+      !  CALL dbcsr_allocate_matrix_set(matrix_rv_old, 3)
+      !  DO ind = 1, 3
+      !     CALL dbcsr_init_p(matrix_rv_old(ind)%matrix)
+      !     CALL dbcsr_create(matrix_rv_old(ind)%matrix, template=matrix_s(1)%matrix, &
+      !                       matrix_type=dbcsr_type_antisymmetric)
+      !     CALL cp_dbcsr_alloc_block_from_nbl(matrix_rv_old(ind)%matrix, sab_orb)
+      !     CALL dbcsr_set(matrix_rv_old(ind)%matrix, 0._dp)
+      !  ENDDO
+
+      !  CALL build_com_rpnl(matrix_rv_old, qs_kind_set, sab_orb, sap_ppnl, eps_ppnl)
+
+      !  IF (qs_env%run_rtp) THEN
+      !     NULLIFY(rtp)
+      !     CALL get_qs_env(qs_env, rtp = rtp)
+      !     CALL cp_fm_create(toprint, matrix_struct=rtp%ao_ao_fmstruct, name="print")
+
+      !     CALL copy_dbcsr_to_fm(matrix_rv(1)%matrix, toprint)
+
+      !     CALL cp_fm_get_info(toprint, nrow_global = ncols, local_data = local_data)
+
+      !     ! DO i = 1, ncols
+      !       ! WRITE(*,*) local_data(i, :)
+      !     ! ENDDO
+
+      !     CALL cp_fm_release(toprint)
+      !  ENDIF
+      ! ! calculate expectation values
       ! real part
       NULLIFY (rho_ao)
       CALL qs_rho_get(rho, rho_ao=rho_ao)
@@ -2538,6 +2576,8 @@ CONTAINS
       IF (calc_rv) CALL dbcsr_deallocate_matrix_set(matrix_rv)
       IF (calc_rrv) CALL dbcsr_deallocate_matrix_set(matrix_rrv)
       IF (calc_rxrv) CALL dbcsr_deallocate_matrix_set(matrix_rxrv)
+
+      ! CALL dbcsr_deallocate_matrix_set(matrix_rv_old)
 
       CALL timestop(handle)
    END SUBROUTINE calculate_commutator_nl_terms
