@@ -2359,7 +2359,6 @@ CONTAINS
          iz = indco(3, idir + 1)
          CALL set_label(rlab(idir + 1), ix, iy, iz)
       ENDDO
-      CALL calc_ev_transform_rho(qs_env, rho_mopair)
 
       NULLIFY (dft_control, rho, rtp, para_env)
       CALL get_qs_env(qs_env, &
