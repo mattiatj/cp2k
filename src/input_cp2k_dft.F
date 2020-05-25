@@ -1920,6 +1920,19 @@ CONTAINS
                           default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(print_key, keyword)
       CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="nlumo", &
+                          description="The number of LUMOs considered for pair dipole analysis"// &
+                          "  (-1=all, huge file sizes for large systems / basis sets)", &
+                          default_i_val=5)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="nhomo", &
+                          description="The number of HOMOs considered for pair dipole analysis"// &
+                          "counts backwards from HOMO (-1=all, huge file sizes for large systems"// &
+                          " / basis sets)", &
+                          default_i_val=3)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
       CALL section_add_subsection(section, print_key)
       CALL section_release(print_key)
 

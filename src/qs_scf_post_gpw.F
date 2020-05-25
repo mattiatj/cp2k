@@ -1102,9 +1102,11 @@ CONTAINS
       CHARACTER(len=*), PARAMETER :: routineN = 'qs_scf_post_moments'
 
       CHARACTER(LEN=default_path_length)                 :: filename
-      INTEGER                                            :: handle, maxmom, reference, unit_nr
-      LOGICAL                                            :: com_nl, do_kpoints, magnetic, periodic, &
-                                                            second_ref_point, vel_reprs, pair_dipole_moments
+      INTEGER                                            :: handle, maxmom, nhomo, nlumo, reference, &
+                                                            unit_nr
+      LOGICAL                                            :: com_nl, do_kpoints, magnetic, &
+                                                            pair_dipole_moments, periodic, &
+                                                            second_ref_point, vel_reprs
       REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
       TYPE(section_vals_type), POINTER                   :: print_key
 
@@ -1132,7 +1134,11 @@ CONTAINS
                                              keyword_name="DFT%PRINT%MOMENTS%SECOND_REFERENCE_POINT")
          pair_dipole_moments = section_get_lval(section_vals=input, &
                                                 keyword_name="DFT%PRINT%MOMENTS%PAIR_DIPOLE_MOMENTS")
+         nhomo = section_get_ival(section_vals=input, &
+                                  keyword_name="DFT%PRINT%MOMENTS%NHOMO")
 
+         nlumo = section_get_ival(section_vals=input, &
+                                  keyword_name="DFT%PRINT%MOMENTS%NLUMO")
 
          NULLIFY (ref_point)
          CALL section_vals_val_get(input, "DFT%PRINT%MOMENTS%REF_POINT", r_vals=ref_point)
@@ -1179,7 +1185,7 @@ CONTAINS
                END IF
             END IF
 
-            CALL calc_rtp_pair_moments(qs_env, reference, ref_point, unit_nr)
+            CALL calc_rtp_pair_moments(qs_env, reference, ref_point, nhomo, nlumo, unit_nr)
 
          ENDIF
 

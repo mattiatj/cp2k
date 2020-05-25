@@ -2280,8 +2280,10 @@ CONTAINS
       INTEGER, INTENT(IN)                                :: unit_number, nmom
       CHARACTER(LEN=8), DIMENSION(:)                     :: rlab
       REAL(dp), DIMENSION(:), INTENT(IN), OPTIONAL       :: mmom, rmom_vel
+
       INTEGER                                            :: i, l
       REAL(dp)                                           :: dd
+
       IF (unit_number > 0) THEN
          IF (PRESENT(mmom)) THEN
             IF (nmom >= 1) THEN
@@ -2318,14 +2320,16 @@ CONTAINS
 !> \param qs_env ...
 !> \param reference ...
 !> \param ref_point ...
+!> \param nhomo ...
+!> \param nlumo ...
 !> \param unit_number ...
 ! **************************************************************************************************
-   SUBROUTINE calc_rtp_pair_moments(qs_env, reference, ref_point, unit_number)
+   SUBROUTINE calc_rtp_pair_moments(qs_env, reference, ref_point, nhomo, nlumo, unit_number)
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
       INTEGER, INTENT(IN), OPTIONAL                      :: reference
       REAL(dp), DIMENSION(:), POINTER                    :: ref_point
-      INTEGER, INTENT(IN), OPTIONAL                      :: unit_number
+      INTEGER, INTENT(IN), OPTIONAL                      :: nhomo, nlumo, unit_number
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'calc_rtp_pair_moments', &
          routineP = moduleN//':'//routineN
@@ -2333,8 +2337,9 @@ CONTAINS
       CHARACTER(LEN=1)                                   :: spin
       CHARACTER(LEN=36)                                  :: matrixname
       CHARACTER(LEN=8), ALLOCATABLE, DIMENSION(:)        :: rlab
-      INTEGER                                            :: handle, idir, ispin, ix, iy, iz, nao, &
-                                                            nm, nmo
+      INTEGER                                            :: first_col, first_row, handle, idir, &
+                                                            ispin, ix, iy, iz, last_col, last_row, &
+                                                            nao, nm, nmo
       REAL(dp), DIMENSION(3)                             :: rcc
       TYPE(cp_para_env_type), POINTER                    :: para_env
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: gs_evecs, matrix_s, moments, moments_mo, &
@@ -2434,6 +2439,28 @@ CONTAINS
          CALL dbcsr_transposed(rho_transpose, rho_mopair(ispin)%matrix)
          CALL get_mo_set(mo_set=mos(ispin)%mo_set, nao=nao, nmo=nmo)
 
+         IF (nhomo .EQ. -1 .AND. nlumo .EQ. -1) THEN
+            first_row = nmo + 1
+            last_row = nao
+            first_col = 1
+            last_col = nmo
+         ELSEIF (nhomo .EQ. -1 .AND. nlumo .GT. 0) THEN
+            first_row = nmo + 1
+            last_row = nmo + nlumo
+            first_col = 1
+            last_col = nmo
+         ELSEIF (nhomo .GT. 0 .AND. nlumo .EQ. -1) THEN
+            first_row = nmo + 1
+            last_row = nao
+            first_col = nmo + 1 - nhomo
+            last_col = nmo
+         ELSE
+            first_row = nmo + 1
+            last_row = nmo + nlumo
+            first_col = nmo + 1 - nhomo
+            last_col = nmo
+         ENDIF
+
          DO idir = 1, nm
             WRITE (spin, "(I1)") ispin
             WRITE (matrixname, "(A)") "PAIR DIP MOM "//TRIM(rlab(idir + 1))//"-DIR, SPIN "//spin
@@ -2443,8 +2470,8 @@ CONTAINS
             CALL dbcsr_transposed(tmp_transpose2, pair_dip_mom)
             CALL dbcsr_add(pair_dip_mom, tmp_transpose2, 1.0_dp, 1.0_dp)
 
-            CALL cp_dbcsr_write_sparse_matrix_dp(pair_dip_mom, 5, 8, qs_env, para_env, nmo + 1, &
-                                                 nao, 1, nmo, output_unit=unit_number, omit_headers=.TRUE.)
+            CALL cp_dbcsr_write_sparse_matrix_dp(pair_dip_mom, 5, 8, qs_env, para_env, first_row, &
+                                                 last_row, first_col, last_col, output_unit=unit_number, omit_headers=.TRUE.)
 
          ENDDO
       ENDDO
