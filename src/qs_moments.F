@@ -2528,7 +2528,7 @@ CONTAINS
          routineP = moduleN//':'//routineN
 
       INTEGER                                            :: handle, ispin
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: gs_evecs_inv, matrix_s, rho_ao
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: gs_evecs_inv, matrix_s, rho_ao, rho_ao_im
       TYPE(dbcsr_type), POINTER                          :: tmp
       TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(rt_prop_type), POINTER                        :: rtp
@@ -2541,12 +2541,12 @@ CONTAINS
                       rtp=rtp, &
                       matrix_s=matrix_s)
 
-      NULLIFY (rho_ao, gs_evecs_inv)
+      NULLIFY (rho_ao, gs_evecs_inv, rho_ao_im)
 
-      IF (.NOT. velrep) THEN
-         CALL qs_rho_get(rho, rho_ao=rho_ao)
-      ELSE
-         CALL qs_rho_get(rho, rho_ao_im=rho_ao)
+      ! IF (.NOT. velrep) THEN
+      CALL qs_rho_get(rho, rho_ao=rho_ao)
+      IF (velrep) THEN
+         CALL qs_rho_get(rho, rho_ao_im=rho_ao_im)
       ENDIF
 
       CALL get_rtp(rtp, gs_evecs_inv=gs_evecs_inv)
@@ -2556,7 +2556,11 @@ CONTAINS
       CALL dbcsr_create(tmp, template=rho_ao(1)%matrix, matrix_type=dbcsr_type_no_symmetry)
 
       DO ispin = 1, SIZE(rho_ao)
-         CALL dbcsr_multiply("N", "T", 1.0_dp, rho_ao(ispin)%matrix, gs_evecs_inv(ispin)%matrix, 0.0_dp, tmp)
+         IF (.NOT. velrep) THEN
+            CALL dbcsr_multiply("N", "T", 1.0_dp, rho_ao(ispin)%matrix, gs_evecs_inv(ispin)%matrix, 0.0_dp, tmp)
+         ELSE
+            CALL dbcsr_multiply("N", "T", 1.0_dp, rho_ao_im(ispin)%matrix, gs_evecs_inv(ispin)%matrix, 0.0_dp, tmp)
+         ENDIF
          CALL dbcsr_multiply("N", "N", 1.0_dp, gs_evecs_inv(ispin)%matrix, tmp, 0.0_dp, rho_mopair(ispin)%matrix)
       ENDDO
 
