@@ -1105,8 +1105,8 @@ CONTAINS
       INTEGER                                            :: handle, maxmom, nhomo, nlumo, reference, &
                                                             unit_nr
       LOGICAL                                            :: com_nl, do_kpoints, magnetic, &
-                                                            pair_dipole_moments, periodic, &
-                                                            second_ref_point, vel_reprs
+                                                            pair_dipole_moments, pairdipvel, &
+                                                            periodic, second_ref_point, vel_reprs
       REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
       TYPE(section_vals_type), POINTER                   :: print_key
 
@@ -1134,6 +1134,8 @@ CONTAINS
                                              keyword_name="DFT%PRINT%MOMENTS%SECOND_REFERENCE_POINT")
          pair_dipole_moments = section_get_lval(section_vals=input, &
                                                 keyword_name="DFT%PRINT%MOMENTS%PAIR_DIPOLE_MOMENTS")
+         pairdipvel = section_get_lval(section_vals=input, &
+                                       keyword_name="DFT%PRINT%MOMENTS%PAIR_DIPOLE_MOM_VEL")
          nhomo = section_get_ival(section_vals=input, &
                                   keyword_name="DFT%PRINT%MOMENTS%NHOMO")
 
@@ -1185,7 +1187,7 @@ CONTAINS
                END IF
             END IF
 
-            CALL calc_rtp_pair_moments(qs_env, reference, ref_point, nhomo, nlumo, unit_nr)
+            CALL calc_rtp_pair_moments(qs_env, reference, ref_point, nhomo, nlumo, pairdipvel, unit_nr)
 
          ENDIF
 

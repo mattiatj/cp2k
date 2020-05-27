@@ -1920,6 +1920,11 @@ CONTAINS
                           default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(print_key, keyword)
       CALL keyword_release(keyword)
+      CALL keyword_create(keyword, __LOCATION__, name="PAIR_DIPOLE_MOM_VEL", &
+                          description="Use velocity representation for pair dipole moments", &
+                          default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(print_key, keyword)
+      CALL keyword_release(keyword)
       CALL keyword_create(keyword, __LOCATION__, name="nlumo", &
                           description="The number of LUMOs considered for pair dipole analysis"// &
                           "  (-1=all, huge file sizes for large systems / basis sets)", &
