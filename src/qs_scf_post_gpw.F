@@ -1187,7 +1187,7 @@ CONTAINS
                END IF
             END IF
 
-            CALL calc_rtp_pair_moments(qs_env, reference, ref_point, nhomo, nlumo, pairdipvel, unit_nr)
+            CALL calc_rtp_pair_moments(qs_env, reference, ref_point, nhomo, nlumo, pairdipvel, com_nl, unit_nr)
 
          ENDIF
 

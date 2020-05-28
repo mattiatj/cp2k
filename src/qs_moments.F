@@ -2323,15 +2323,16 @@ CONTAINS
 !> \param nhomo ...
 !> \param nlumo ...
 !> \param velrep ...
+!> \param com_nl ...
 !> \param unit_number ...
 ! **************************************************************************************************
-   SUBROUTINE calc_rtp_pair_moments(qs_env, reference, ref_point, nhomo, nlumo, velrep, unit_number)
+   SUBROUTINE calc_rtp_pair_moments(qs_env, reference, ref_point, nhomo, nlumo, velrep, com_nl, unit_number)
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
       INTEGER, INTENT(IN), OPTIONAL                      :: reference
       REAL(dp), DIMENSION(:), POINTER                    :: ref_point
       INTEGER, INTENT(IN), OPTIONAL                      :: nhomo, nlumo
-      LOGICAL, INTENT(IN), OPTIONAL                      :: velrep
+      LOGICAL, INTENT(IN), OPTIONAL                      :: velrep, com_nl
       INTEGER, INTENT(IN), OPTIONAL                      :: unit_number
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'calc_rtp_pair_moments', &
@@ -2343,17 +2344,21 @@ CONTAINS
       INTEGER                                            :: first_col, first_row, handle, idir, &
                                                             ispin, ix, iy, iz, last_col, last_row, &
                                                             nao, nm, nmo
-      LOGICAL                                            :: myvelrep
+      LOGICAL                                            :: mycom_nl, myvelrep
+      REAL(dp)                                           :: eps_ppnl
       REAL(dp), DIMENSION(3)                             :: rcc
+      TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_para_env_type), POINTER                    :: para_env
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: gs_evecs, matrix_s, moments, moments_mo, &
-                                                            rho_ao, rho_mopair
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: gs_evecs, matrix_rv, matrix_s, moments, &
+                                                            moments_mo, rho_ao, rho_mopair
       TYPE(dbcsr_type), POINTER                          :: pair_dip_mom, rho_transpose, &
                                                             tmp_transpose2
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-         POINTER                                         :: sab_orb
+         POINTER                                         :: sab_orb, sap_ppnl
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(rt_prop_type), POINTER                        :: rtp
 
@@ -2362,6 +2367,11 @@ CONTAINS
       myvelrep = .FALSE.
       IF (PRESENT(velrep)) THEN
          myvelrep = velrep
+      ENDIF
+
+      mycom_nl = .FALSE.
+      IF (PRESENT(com_nl)) THEN
+         mycom_nl = com_nl
       ENDIF
 
       CALL get_reference_point(rcc, qs_env=qs_env, reference=reference, ref_point=ref_point)
@@ -2377,13 +2387,19 @@ CONTAINS
       ENDDO
 
       NULLIFY (dft_control, rho, rtp, para_env, sab_orb)
+      NULLIFY (qs_kind_set, particle_set, sap_ppnl, cell)
       CALL get_qs_env(qs_env, &
+                      cell=cell, &
                       dft_control=dft_control, &
                       rho=rho, &
                       rtp=rtp, &
                       para_env=para_env, &
-                      sab_orb=sab_orb)
+                      sab_orb=sab_orb, &
+                      qs_kind_set=qs_kind_set, &
+                      particle_set=particle_set, &
+                      sap_ppnl=sap_ppnl)
 
+      eps_ppnl = dft_control%qs_control%eps_ppnl
       ! Get density matrices projeted onto gs orbitals
       NULLIFY (rho_mopair)
       CALL dbcsr_allocate_matrix_set(rho_mopair, dft_control%nspins)
@@ -2420,6 +2436,23 @@ CONTAINS
             CALL dbcsr_set(moments(idir)%matrix, 0.0_dp)
          ENDDO
          CALL build_lin_mom_matrix(qs_env, moments)
+         IF (mycom_nl) THEN
+            NULLIFY (matrix_rv)
+            CALL dbcsr_allocate_matrix_set(matrix_rv, 3)
+            DO idir = 1, 3
+               CALL dbcsr_init_p(matrix_rv(idir)%matrix)
+               CALL dbcsr_create(matrix_rv(idir)%matrix, template=matrix_s(1)%matrix, &
+                                 matrix_type=dbcsr_type_antisymmetric)
+               CALL cp_dbcsr_alloc_block_from_nbl(matrix_rv(idir)%matrix, sab_orb)
+               CALL dbcsr_set(matrix_rv(idir)%matrix, 0._dp)
+            ENDDO
+            CALL build_com_mom_nl(qs_kind_set, sab_orb, sap_ppnl, eps_ppnl, particle_set, matrix_rv=matrix_rv, &
+                                  ref_point=rcc, cell=cell)
+            DO idir = 1, 3
+               CALL dbcsr_add(moments(idir)%matrix, matrix_rv(idir)%matrix, 1.0_dp, 1.0_dp)
+            ENDDO
+            CALL dbcsr_deallocate_matrix_set(matrix_rv)
+         ENDIF
       ENDIF
 
       ! temporary matrices
