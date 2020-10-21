@@ -430,7 +430,10 @@ CONTAINS
          CALL cp_fm_triangular_multiply(ortho, matrix_shc0, side="L", transpose_tr=.TRUE., &
                                         invert_tr=.FALSE., uplo_tr="U", n_rows=n, n_cols=k, alpha=1.0_dp)
       CASE (cholesky_reduce)
-         CALL cp_fm_cholesky_restore(matrix_hc0, k, ortho, matrix_shc0, "SOLVE", transa="T")
+         ! CALL cp_fm_cholesky_restore(matrix_hc0, k, ortho, matrix_shc0, "SOLVE", transa="T")
+         CALL cp_fm_to_fm(matrix_hc0, matrix_shc0)
+         CALL cp_fm_triangular_multiply(ortho, matrix_shc0, side="L", transpose_tr=.TRUE., &
+                                        invert_tr=.TRUE., uplo_tr="U", n_rows=n, n_cols=k, alpha=1.0_dp)
       CASE DEFAULT
          CPABORT("cholesky type not implemented")
       END SELECT
@@ -491,8 +494,10 @@ CONTAINS
                                         invert_tr=.FALSE., uplo_tr="U", n_rows=n, n_cols=n, alpha=1.0_dp)
          CALL cp_fm_to_fm(matrix_pre, matrix_tmp)
       CASE (cholesky_reduce)
-         CALL cp_fm_cholesky_restore(matrix_pre, n, ortho, matrix_tmp, "SOLVE")
-         CALL cp_fm_to_fm(matrix_tmp, matrix_pre)
+         ! CALL cp_fm_cholesky_restore(matrix_pre, n, ortho, matrix_tmp, "SOLVE")
+         ! CALL cp_fm_to_fm(matrix_tmp, matrix_pre)
+         CALL cp_fm_triangular_multiply(ortho, matrix_pre, side="L", transpose_tr=.FALSE., invert_tr=.TRUE., &
+                                        uplo_tr="U", n_rows=n, n_cols=n, alpha=1.0_dp)
       END SELECT
 
       ! test that the subspace remained conserved
