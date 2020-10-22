@@ -352,6 +352,13 @@ CONTAINS
          DO ispin = 1, nspins
             CALL get_mo_set(mo_set=mos(ispin)%mo_set, mo_coeff_b=mo_coeff_b, mo_coeff=mo_coeff)
             use_mo_coeff_b = mos(ispin)%mo_set%use_mo_coeff_b
+            write(char_proc, '(I2)') blacs_env%my_pid
+            fname = "blacs_env_proc_"//TRIM(char_proc)//".log"
+            out_unit = blacs_env%my_pid * 31
+            open(unit = out_unit, FILE = fname, STATUS="replace", POSITION="append")
+            call cp_blacs_env_write(blacs_env, out_unit)
+            close(out_unit)
+
             IF (use_mo_coeff_b .AND. do_co_rotate) THEN
                CALL calculate_subspace_eigenvalues(mo_coeff_b, matrix_ks(ispin)%matrix, &
                                                    do_rotation=.TRUE., &
@@ -359,13 +366,6 @@ CONTAINS
                                                    para_env=para_env, &
                                                    blacs_env=blacs_env)
             ELSEIF (use_mo_coeff_b) THEN
-               write(char_proc, '(I2)') blacs_env%my_pid
-               fname = "blacs_env_proc_"//TRIM(char_proc)//".log"
-               out_unit = blacs_env%my_pid * 31
-               open(unit = out_unit, FILE = fname, STATUS="REPLACE")
-               call cp_blacs_env_write(blacs_env, out_unit)
-               close(out_unit)
-
                CALL calculate_subspace_eigenvalues(mo_coeff_b, matrix_ks(ispin)%matrix, &
                                                    do_rotation=.TRUE., &
                                                    para_env=para_env, &
