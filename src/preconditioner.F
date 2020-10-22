@@ -302,8 +302,9 @@ CONTAINS
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'prepare_preconditioner'
 
-      CHARACTER(LEN=default_string_length)               :: msg
-      INTEGER                                            :: handle, icall, ispin, n_loops
+      character(len=2)                                   :: char_proc
+      CHARACTER(LEN=default_string_length)               :: msg, fname
+      INTEGER                                            :: handle, icall, ispin, n_loops, out_unit
       LOGICAL                                            :: do_co_rotate, my_convert_to_dbcsr, &
                                                             my_has_unit_metric, use_mo_coeff_b
       TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
@@ -358,7 +359,13 @@ CONTAINS
                                                    para_env=para_env, &
                                                    blacs_env=blacs_env)
             ELSEIF (use_mo_coeff_b) THEN
-               call cp_blacs_env_write(blacs_env)
+               write(char_proc, '(I2)') blacs_env%my_pid
+               fname = "blacs_env_proc_"//TRIM(char_proc)//".log"
+               out_unit = blacs_env%my_pid * 31
+               open(unit = out_unit, FILE = fname, STATUS="REPLACE")
+               call cp_blacs_env_write(blacs_env, out_unit)
+               call close(out_unit)
+               
                CALL calculate_subspace_eigenvalues(mo_coeff_b, matrix_ks(ispin)%matrix, &
                                                    do_rotation=.TRUE., &
                                                    para_env=para_env, &
