@@ -13,7 +13,8 @@
 !> \author Joost VandeVondele (09.2002)
 ! **************************************************************************************************
 MODULE preconditioner
-   USE cp_blacs_env,                    ONLY: cp_blacs_env_type
+   USE cp_blacs_env,                    ONLY: cp_blacs_env_type,&
+                                              cp_blacs_env_write
    USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm
    USE cp_fm_types,                     ONLY: cp_fm_get_info,&
@@ -357,6 +358,7 @@ CONTAINS
                                                    para_env=para_env, &
                                                    blacs_env=blacs_env)
             ELSEIF (use_mo_coeff_b) THEN
+               call cp_blacs_env_write(blacs_env)
                CALL calculate_subspace_eigenvalues(mo_coeff_b, matrix_ks(ispin)%matrix, &
                                                    do_rotation=.TRUE., &
                                                    para_env=para_env, &
