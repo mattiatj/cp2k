@@ -34,7 +34,8 @@ MODULE rt_propagation_types
                                               cp_fm_struct_type
    USE cp_fm_types,                     ONLY: cp_fm_create,&
                                               cp_fm_p_type,&
-                                              cp_fm_release
+                                              cp_fm_release,&
+                                              cp_fm_type
    USE cp_fm_vect,                      ONLY: cp_fm_vect_dealloc
    USE cp_log_handling,                 ONLY: cp_to_string
    USE dbcsr_api,                       ONLY: dbcsr_create,&
@@ -74,6 +75,11 @@ MODULE rt_propagation_types
       TYPE(cp_fm_p_type), POINTER, DIMENSION(:)     :: admm
    END TYPE rtp_mos_type
 
+   TYPE rtp_canon_ortho
+      TYPE(cp_fm_type), POINTER                   :: xmatrix
+      TYPE(cp_fm_type), POINTER                   :: ymatrix
+   END TYPE rtp_canon_ortho
+
    TYPE rt_prop_type
       TYPE(dbcsr_p_type), POINTER, DIMENSION(:)  :: exp_H_old
       TYPE(dbcsr_p_type), POINTER, DIMENSION(:)  :: exp_H_new
@@ -89,6 +95,8 @@ MODULE rt_propagation_types
       TYPE(dbcsr_p_type), POINTER, DIMENSION(:) :: SinvB
       TYPE(rtp_rho_type), POINTER                  :: rho
       TYPE(rtp_mos_type), POINTER                  :: mos
+      TYPE(rtp_mos_type), POINTER                  :: mos_ortho
+      TYPE(rtp_canon_ortho), POINTER              :: canon_ortho
       REAL(KIND=dp)                               :: energy_old
       REAL(KIND=dp)                               :: energy_new
       REAL(KIND=dp)                               :: dt
@@ -147,9 +155,10 @@ CONTAINS
       LOGICAL                                            :: linear_scaling
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos_aux
 
-      INTEGER                                            :: i, j, nao, nrow_block, nspin
+      INTEGER                                            :: i, j, nao, ncol_block, ndep, nmo, &
+                                                            nrow_block, nspin
       TYPE(cp_fm_pool_p_type), DIMENSION(:), POINTER     :: ao_mo_fm_pools
-      TYPE(cp_fm_struct_type), POINTER                   :: ao_mo_fmstruct
+      TYPE(cp_fm_struct_type), POINTER                   :: ao_mo_fmstruct, tmp_fmstruct
       TYPE(rtp_control_type), POINTER                    :: rtp_control
 
       CALL cite_reference(Kunert2003)
@@ -160,7 +169,7 @@ CONTAINS
 
       nspin = dft_control%nspins
 
-      NULLIFY (rtp%mos, rtp%rho)
+      NULLIFY (rtp%mos, rtp%rho, rtp%mos_ortho, rtp%canon_ortho)
       rtp%linear_scaling = linear_scaling
 
       IF (rtp%linear_scaling) THEN
@@ -183,8 +192,8 @@ CONTAINS
          CALL mpools_get(mpools, ao_mo_fm_pools=ao_mo_fm_pools)
 
          ao_mo_fmstruct => fm_pool_get_el_struct(ao_mo_fm_pools(1)%pool)
-         CALL cp_fm_struct_get(ao_mo_fmstruct, nrow_block=nrow_block)
-         CALL get_mo_set(mos(1)%mo_set, nao=nao)
+         CALL cp_fm_struct_get(ao_mo_fmstruct, nrow_block=nrow_block, ncol_block=ncol_block)
+         CALL get_mo_set(mos(1)%mo_set, nao=nao, nmo=nmo)
 
          CALL cp_fm_struct_create(fmstruct=rtp%ao_ao_fmstruct, &
                                   nrow_block=nrow_block, ncol_block=nrow_block, &
@@ -224,6 +233,49 @@ CONTAINS
                END IF
             END DO
          END DO
+         IF (rtp_control%canonical_ortho) THEN
+            ndep = rtp_control%nlindep
+            CALL cp_fm_struct_create(fmstruct=tmp_fmstruct, &
+                                     nrow_block=nrow_block, ncol_block=ncol_block, &
+                                     nrow_global=nao - ndep, ncol_global=nmo, &
+                                     template_fmstruct=ao_mo_fmstruct)
+
+            ALLOCATE (rtp%mos_ortho)
+            ALLOCATE (rtp%mos_ortho%old(2*nspin))
+            ALLOCATE (rtp%mos_ortho%new(2*nspin))
+            ALLOCATE (rtp%mos_ortho%next(2*nspin))
+            NULLIFY (rtp%mos_ortho%admm)
+            DO i = 1, nspin
+               DO j = 1, 2
+                  NULLIFY (rtp%mos_ortho%old(2*(i - 1) + j)%matrix)
+                  NULLIFY (rtp%mos_ortho%new(2*(i - 1) + j)%matrix)
+                  NULLIFY (rtp%mos_ortho%next(2*(i - 1) + j)%matrix)
+                  CALL cp_fm_create(rtp%mos_ortho%old(2*(i - 1) + j)%matrix, &
+                                    matrix_struct=tmp_fmstruct, &
+                                    name="mos_ortho_old"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
+                  CALL cp_fm_create(rtp%mos_ortho%new(2*(i - 1) + j)%matrix, &
+                                    matrix_struct=tmp_fmstruct, &
+                                    name="mos_ortho_new"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
+                  CALL cp_fm_create(rtp%mos_ortho%next(2*(i - 1) + j)%matrix, &
+                                    matrix_struct=tmp_fmstruct, &
+                                    name="mos_ortho_next"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
+               END DO
+            END DO
+
+            CALL cp_fm_struct_release(tmp_fmstruct)
+
+            ! transformation matrices ao basis <--> canonical basis
+            CALL cp_fm_struct_create(fmstruct=tmp_fmstruct, &
+                                     nrow_block=nrow_block, ncol_block=nrow_block, &
+                                     nrow_global=nao, ncol_global=nao - ndep, &
+                                     template_fmstruct=ao_mo_fmstruct)
+
+            ALLOCATE (rtp%canon_ortho)
+            CALL cp_fm_create(rtp%canon_ortho%xmatrix, matrix_struct=tmp_fmstruct, name="xmatrix")
+            CALL cp_fm_create(rtp%canon_ortho%ymatrix, matrix_struct=tmp_fmstruct, name="ymatrix")
+
+            CALL cp_fm_struct_release(tmp_fmstruct)
+         END IF
       END IF
 
       NULLIFY (rtp%exp_H_old)
@@ -304,6 +356,10 @@ CONTAINS
 !> \param mos_new ...
 !> \param mos_old ...
 !> \param mos_next ...
+!> \param mos_ortho ...
+!> \param mos_ortho_new ...
+!> \param mos_ortho_old ...
+!> \param mos_ortho_next ...
 !> \param S_inv ...
 !> \param S_half ...
 !> \param S_minus_half ...
@@ -320,8 +376,8 @@ CONTAINS
 !> \param admm_mos ...
 ! **************************************************************************************************
    SUBROUTINE get_rtp(rtp, exp_H_old, exp_H_new, H_last_iter, rho_old, rho_next, rho_new, mos, mos_new, mos_old, mos_next, &
-                      S_inv, S_half, S_minus_half, B_mat, C_mat, propagator_matrix, mixing, mixing_factor, &
-                      S_der, dt, nsteps, SinvH, SinvB, admm_mos)
+                      mos_ortho, mos_ortho_new, mos_ortho_old, mos_ortho_next, S_inv, S_half, S_minus_half, B_mat, C_mat, &
+                      propagator_matrix, mixing, mixing_factor, S_der, dt, nsteps, SinvH, SinvB, admm_mos)
 
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
@@ -330,6 +386,10 @@ CONTAINS
       TYPE(rtp_mos_type), OPTIONAL, POINTER              :: mos
       TYPE(cp_fm_p_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: mos_new, mos_old, mos_next
+      TYPE(rtp_mos_type), OPTIONAL, POINTER              :: mos_ortho
+      TYPE(cp_fm_p_type), DIMENSION(:), OPTIONAL, &
+         POINTER                                         :: mos_ortho_new, mos_ortho_old, &
+                                                            mos_ortho_next
       TYPE(dbcsr_type), OPTIONAL, POINTER                :: S_inv, S_half, S_minus_half, B_mat
       TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: C_mat, propagator_matrix
@@ -358,6 +418,10 @@ CONTAINS
       IF (PRESENT(mos_new)) mos_new => rtp%mos%new
       IF (PRESENT(mos_next)) mos_next => rtp%mos%next
       IF (PRESENT(admm_mos)) admm_mos => rtp%mos%admm
+      IF (PRESENT(mos_ortho)) mos_ortho => rtp%mos_ortho
+      IF (PRESENT(mos_ortho_old)) mos_ortho_old => rtp%mos_ortho%old
+      IF (PRESENT(mos_ortho_new)) mos_ortho_new => rtp%mos_ortho%new
+      IF (PRESENT(mos_ortho_next)) mos_ortho_next => rtp%mos_ortho%next
 
       IF (PRESENT(S_inv)) S_inv => rtp%S_inv
       IF (PRESENT(S_half)) S_half => rtp%S_half
@@ -405,6 +469,24 @@ CONTAINS
          IF (ASSOCIATED(rtp%mos%admm)) &
             CALL cp_fm_vect_dealloc(rtp%mos%admm)
          DEALLOCATE (rtp%mos)
+      END IF
+      IF (ASSOCIATED(rtp%mos_ortho)) THEN
+         IF (ASSOCIATED(rtp%mos_ortho%old)) &
+            CALL cp_fm_vect_dealloc(rtp%mos_ortho%old)
+         IF (ASSOCIATED(rtp%mos_ortho%new)) &
+            CALL cp_fm_vect_dealloc(rtp%mos_ortho%new)
+         IF (ASSOCIATED(rtp%mos_ortho%next)) &
+            CALL cp_fm_vect_dealloc(rtp%mos_ortho%next)
+         IF (ASSOCIATED(rtp%mos_ortho%admm)) &
+            CALL cp_fm_vect_dealloc(rtp%mos_ortho%admm)
+         DEALLOCATE (rtp%mos_ortho)
+      END IF
+      IF (ASSOCIATED(rtp%canon_ortho)) THEN
+         IF (ASSOCIATED(rtp%canon_ortho%xmatrix)) &
+            CALL cp_fm_release(rtp%canon_ortho%xmatrix)
+         IF (ASSOCIATED(rtp%canon_ortho%ymatrix)) &
+            CALL cp_fm_release(rtp%canon_ortho%ymatrix)
+         DEALLOCATE (rtp%canon_ortho)
       END IF
       CALL dbcsr_deallocate_matrix(rtp%S_inv)
       CALL dbcsr_deallocate_matrix(rtp%S_half)

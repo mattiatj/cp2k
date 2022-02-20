@@ -35,10 +35,12 @@ MODULE cp_fm_diag
                          set_elpa_kernel, &
                          set_elpa_print, &
                          set_elpa_qr
+   USE cp_para_types, ONLY: cp_para_env_type
    USE cp_fm_types, ONLY: cp_fm_get_info, &
                           cp_fm_set_element, &
                           cp_fm_to_fm, &
-                          cp_fm_type
+                          cp_fm_type, &
+                          cp_fm_copy_general
    USE cp_log_handling, ONLY: cp_get_default_logger, &
                               cp_logger_get_default_unit_nr, &
                               cp_logger_get_unit_nr, &
@@ -86,7 +88,8 @@ MODULE cp_fm_diag
              cp_fm_geeig, &
              cp_fm_geeig_canon, &
              diag_init, &
-             diag_finalize
+             diag_finalize, &
+             cp_fm_ortho_canon
 
 CONTAINS
 
@@ -1320,5 +1323,76 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE cp_fm_geeig_canon
+
+! **************************************************************************************************
+!> \brief Calculates
+!> \param smatrix ...
+!> \param xmatrix X = U*s**(-1/2) orthogonalizes
+!> \param ndep ...
+!> \param epseigval ...
+!> \param seigval ...
+!> \param ymatrix ...
+! **************************************************************************************************
+   SUBROUTINE cp_fm_ortho_canon(smatrix, xmatrix, ndep, epseigval, seigval, ymatrix)
+
+      TYPE(cp_fm_type), POINTER                          :: smatrix, xmatrix
+      INTEGER, INTENT(OUT)                               :: ndep
+      REAL(kind=dp), INTENT(IN)                          :: epseigval
+      REAL(KIND=dp), DIMENSION(:), INTENT(OUT)           :: seigval
+      TYPE(cp_fm_type), OPTIONAL, POINTER                :: ymatrix
+
+      CHARACTER(len=*), PARAMETER                        :: routineN = 'cp_fm_ortho_canon'
+
+      INTEGER                                            :: handle, i, icol, irow, nao, nc
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: seigvalsqrt
+
+      CALL timeset(routineN, handle)
+
+      ! Allocate eigenvalues
+      CALL cp_fm_get_info(smatrix, nrow_global=nao)
+      ALLOCATE (seigvalsqrt(nao))
+
+      ! Diagonalize -S matrix, this way the NULL space is at the end of the spectrum
+      ! use xmatrix as temporary storage for the eigenvalues
+      CALL cp_fm_scale(-1.0_dp, smatrix)
+      CALL choose_eigv_solver(matrix=smatrix, eigenvectors=xmatrix, eigenvalues=seigval)
+      seigval(:) = -seigval(:)
+
+      nc = nao
+      DO i = 1, nao
+         IF (seigval(i) < epseigval) THEN
+            nc = i - 1
+            EXIT
+         END IF
+      END DO
+      CPASSERT(nc /= 0)
+      ndep = nao - nc
+
+      IF (nc /= nao) THEN
+         ! Set NULL space in eigenvector matrix of S to zero
+         DO icol = nc + 1, nao
+            DO irow = 1, nao
+               CALL cp_fm_set_element(xmatrix, irow, icol, 0.0_dp)
+            END DO
+         END DO
+         ! Set small eigenvalues to a dummy save value
+         seigval(nc + 1:nao) = 1.0_dp
+      END IF
+
+      ! Calculate Y = U*s**(1/2) if required
+      IF (PRESENT(ymatrix)) THEN
+         CALL cp_fm_to_fm(xmatrix, ymatrix)
+         seigvalsqrt(:) = SQRT(seigval(:))
+         CALL cp_fm_column_scale(ymatrix, seigvalsqrt)
+      END IF
+
+      ! Calculate X = U*s**(-1/2)
+      seigvalsqrt(:) = 1.0_dp/SQRT(seigval(:))
+      CALL cp_fm_column_scale(xmatrix, seigvalsqrt)
+
+      DEALLOCATE (seigvalsqrt)
+
+      CALL timestop(handle)
+   END SUBROUTINE
 
 END MODULE cp_fm_diag

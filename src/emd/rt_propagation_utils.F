@@ -12,17 +12,24 @@
 
 MODULE rt_propagation_utils
    USE atomic_kind_types,               ONLY: atomic_kind_type
+   USE cp_blacs_env,                    ONLY: cp_blacs_env_type
    USE cp_control_types,                ONLY: dft_control_type,&
                                               rtp_control_type
-   USE cp_dbcsr_operations,             ONLY: cp_dbcsr_plus_fm_fm_t,&
+   USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
+                                              cp_dbcsr_plus_fm_fm_t,&
                                               dbcsr_deallocate_matrix_set
    USE cp_fm_basic_linalg,              ONLY: cp_fm_column_scale
+   USE cp_fm_diag,                      ONLY: cp_fm_ortho_canon
+   USE cp_fm_struct,                    ONLY: cp_fm_struct_create,&
+                                              cp_fm_struct_release,&
+                                              cp_fm_struct_type
    USE cp_fm_types,                     ONLY: cp_fm_create,&
                                               cp_fm_get_info,&
                                               cp_fm_p_type,&
                                               cp_fm_release,&
                                               cp_fm_set_all,&
-                                              cp_fm_to_fm
+                                              cp_fm_to_fm,&
+                                              cp_fm_type
    USE cp_fm_vect,                      ONLY: cp_fm_vect_dealloc
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_get_default_unit_nr,&
@@ -37,7 +44,8 @@ MODULE rt_propagation_utils
    USE input_constants,                 ONLY: use_restart_wfn,&
                                               use_rt_restart
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
-                                              section_vals_type
+                                              section_vals_type,&
+                                              section_vals_val_get
    USE kinds,                           ONLY: default_path_length,&
                                               dp
    USE mathconstants,                   ONLY: zero
@@ -70,7 +78,9 @@ MODULE rt_propagation_utils
              calc_S_derivs, &
              calc_update_rho, &
              calc_update_rho_sparse, &
-             calculate_P_imaginary
+             calculate_P_imaginary, &
+             rt_canon_ortho, &
+             transform_to_canon_ortho_coeffs
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'rt_propagation_utils'
 
@@ -515,5 +525,123 @@ CONTAINS
       CALL cp_fm_vect_dealloc(mos_occ)
 
    END SUBROUTINE calculate_P_imaginary
+
+! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param calc_trsfmatrices ...
+!> \param inverses ...
+! **************************************************************************************************
+   SUBROUTINE rt_canon_ortho(qs_env, calc_trsfmatrices, inverses)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      LOGICAL                                            :: calc_trsfmatrices
+      LOGICAL, OPTIONAL                                  :: inverses
+
+      INTEGER                                            :: i, nao, ndep
+      LOGICAL                                            :: my_inverses
+      REAL(kind=dp)                                      :: epseigval
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: seigval
+      REAL(kind=dp), DIMENSION(:, :), POINTER            :: local_data
+      TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
+      TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_tmp
+      TYPE(cp_fm_type), POINTER                          :: mat_tmp, mat_tmp2, s_fm
+      TYPE(cp_para_env_type), POINTER                    :: para_env
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(rt_prop_type), POINTER                        :: rtp
+      TYPE(rtp_control_type), POINTER                    :: rtp_control
+      TYPE(section_vals_type), POINTER                   :: input, scf_section
+
+      ! calc_trsfmatrices = .true.
+      my_inverses = .FALSE.
+      IF (PRESENT(inverses)) my_inverses = inverses
+
+      NULLIFY (matrix_s, para_env, blacs_env, input, scf_section, rtp_control, dft_control, rtp)
+      CALL get_qs_env(qs_env, &
+                      matrix_s=matrix_s, &
+                      para_env=para_env, &
+                      blacs_env=blacs_env, &
+                      input=input, &
+                      dft_control=dft_control, &
+                      rtp=rtp)
+      CALL dbcsr_get_info(matrix_s(1)%matrix, nfullrows_total=nao)
+      WRITE (*, *) 'nao', nao
+
+      ALLOCATE (seigval(nao))
+      scf_section => section_vals_get_subs_vals(input, "DFT%SCF")
+      CALL section_vals_val_get(scf_section, "EPS_EIGVAL", r_val=epseigval)
+
+      ! create fm struct for overlap matrix
+      CALL cp_fm_struct_create(fm_struct_tmp, &
+                               nrow_global=nao, &
+                               ncol_global=nao, &
+                               context=blacs_env, &
+                               para_env=para_env)
+      rtp_control => dft_control%rtp_control
+      CALL cp_fm_create(s_fm, matrix_struct=fm_struct_tmp, name="overlap fm")
+      CALL cp_fm_create(mat_tmp, matrix_struct=fm_struct_tmp, name="temporary fm")
+      IF (calc_trsfmatrices) CALL cp_fm_create(mat_tmp2, matrix_struct=fm_struct_tmp, name="temporary fm")
+      CALL cp_fm_struct_release(fm_struct_tmp)
+
+      ! CALL dbcsr_print(matrix_s(1)%matrix, matlab_format=.TRUE.)
+      CALL copy_dbcsr_to_fm(matrix_s(1)%matrix, s_fm)
+
+      IF (.NOT. calc_trsfmatrices) THEN
+         CALL cp_fm_ortho_canon(s_fm, mat_tmp, ndep, epseigval, seigval)
+      ELSE
+         CALL cp_fm_ortho_canon(s_fm, mat_tmp, ndep, epseigval, seigval, mat_tmp2)
+      END IF
+      rtp_control%nlindep = ndep
+      WRITE (*, *) 'ndep', ndep
+
+      IF (calc_trsfmatrices) THEN
+         CPASSERT(ASSOCIATED(rtp%canon_ortho))
+         CALL cp_fm_to_fm(mat_tmp, rtp%canon_ortho%xmatrix, nao - ndep, 1, 1)
+         CALL cp_fm_to_fm(mat_tmp2, rtp%canon_ortho%ymatrix, nao - ndep, 1, 1)
+
+         CALL cp_fm_get_info(rtp%canon_ortho%xmatrix, local_data=local_data)
+
+         DO i = 1, nao
+            WRITE (*, *) local_data(i, :)
+         END DO
+
+      END IF
+
+      CALL cp_fm_release(s_fm)
+      CALL cp_fm_release(mat_tmp)
+      IF (calc_trsfmatrices) CALL cp_fm_release(mat_tmp2)
+      DEALLOCATE (seigval)
+
+   END SUBROUTINE rt_canon_ortho
+
+! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param rtp ...
+! **************************************************************************************************
+   SUBROUTINE transform_to_canon_ortho_coeffs(qs_env, rtp)!, rtpmos)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(rt_prop_type), POINTER                        :: rtp
+
+      INTEGER                                            :: nrow
+      REAL(kind=dp)                                      :: l
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: local_data
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: new_ortho, next_ortho, old_ortho
+
+! TYPE(cp_fm_p_type), POINTER, DIMENSION(:)          :: rtpmos
+
+      CALL get_qs_env(qs_env)
+      l = rtp%dt
+
+      NULLIFY (old_ortho, new_ortho, next_ortho)
+      CALL get_rtp(rtp, mos_ortho_new=new_ortho, mos_ortho_old=old_ortho, mos_ortho_next=next_ortho)
+
+      CALL cp_fm_get_info(next_ortho(1)%matrix, local_data=local_data, nrow_global=nrow)
+
+      ! do i = 1, nrow
+      !    write(*,*) local_data (i,:)
+      ! enddo
+
+   END SUBROUTINE transform_to_canon_ortho_coeffs
 
 END MODULE rt_propagation_utils

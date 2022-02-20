@@ -81,7 +81,9 @@ MODULE rt_propagation
    USE rt_propagation_utils,            ONLY: calc_S_derivs,&
                                               calc_update_rho,&
                                               calc_update_rho_sparse,&
-                                              get_restart_wfn
+                                              get_restart_wfn,&
+                                              rt_canon_ortho,&
+                                              transform_to_canon_ortho_coeffs
    USE rt_propagation_velocity_gauge,   ONLY: velocity_gauge_ks_matrix
    USE rt_propagator_init,              ONLY: init_propagators,&
                                               rt_initialize_rho_from_mos
@@ -219,6 +221,10 @@ CONTAINS
       rtp_control => dft_control%rtp_control
 
       periodic_cell = ANY(cell%perd > 0)
+      IF (rtp_control%canonical_ortho) THEN
+         CALL rt_canon_ortho(qs_env, .TRUE.)
+         CALL transform_to_canon_ortho_coeffs(qs_env, rtp)
+      END IF
 
       IF (.NOT. rtp%linear_scaling) THEN
          CALL get_qs_env(qs_env, mos=mos)
@@ -462,6 +468,7 @@ CONTAINS
          qs_env%run_rtp = .TRUE.
          ALLOCATE (qs_env%rtp)
          CALL get_qs_env(qs_env, matrix_s=matrix_s)
+         IF (dft_control%rtp_control%canonical_ortho) CALL rt_canon_ortho(qs_env, calc_trsfmatrices=.FALSE.)
          CALL rt_prop_create(qs_env%rtp, qs_env%mos, qs_env%mpools, dft_control, matrix_s(1)%matrix, &
                              rtp_control%linear_scaling, qs_env%admm_env%mos_aux_fit)
 
@@ -498,6 +505,7 @@ CONTAINS
          END IF
          ALLOCATE (qs_env%rtp)
          CALL get_qs_env(qs_env, matrix_s=matrix_s)
+         IF (dft_control%rtp_control%canonical_ortho) CALL rt_canon_ortho(qs_env, calc_trsfmatrices=.FALSE.)
          CALL rt_prop_create(qs_env%rtp, qs_env%mos, qs_env%mpools, dft_control, matrix_s(1)%matrix, &
                              rtp_control%linear_scaling, qs_env%admm_env%mos_aux_fit)
          CALL get_restart_wfn(qs_env)
