@@ -82,8 +82,7 @@ MODULE rt_propagation
                                               calc_update_rho,&
                                               calc_update_rho_sparse,&
                                               get_restart_wfn,&
-                                              rt_canon_ortho,&
-                                              transform_to_canon_ortho_coeffs
+                                              rt_canon_ortho
    USE rt_propagation_velocity_gauge,   ONLY: velocity_gauge_ks_matrix
    USE rt_propagator_init,              ONLY: init_propagators,&
                                               rt_initialize_rho_from_mos
@@ -136,7 +135,7 @@ CONTAINS
       ! Initializes the extrapolation
       CALL get_qs_env(qs_env=qs_env, rtp=rtp, input=input)
       aspc_order = rtp_control%aspc_order
-      CALL rtp_history_create(rtp, aspc_order)
+      CALL rtp_history_create(rtp, rtp_control, aspc_order)
 
       ! Reads the simulation parameters from the input
       motion_section => section_vals_get_subs_vals(force_env%root_section, "MOTION")
@@ -223,7 +222,6 @@ CONTAINS
       periodic_cell = ANY(cell%perd > 0)
       IF (rtp_control%canonical_ortho) THEN
          CALL rt_canon_ortho(qs_env, .TRUE.)
-         CALL transform_to_canon_ortho_coeffs(qs_env, rtp)
       END IF
 
       IF (.NOT. rtp%linear_scaling) THEN

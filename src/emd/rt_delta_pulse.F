@@ -16,13 +16,6 @@ MODULE rt_delta_pulse
    USE cell_types,                      ONLY: cell_type
    USE commutator_rpnl,                 ONLY: build_com_mom_nl,&
                                               build_com_nl_mag
-   USE cp_blacs_env,                    ONLY: cp_blacs_env_type
-   USE cp_cfm_basic_linalg,             ONLY: cp_cfm_column_scale
-   USE cp_cfm_diag,                     ONLY: cp_cfm_heevd
-   USE cp_cfm_types,                    ONLY: cp_cfm_create,&
-                                              cp_cfm_release,&
-                                              cp_cfm_to_cfm,&
-                                              cp_cfm_type
    USE cp_control_types,                ONLY: dft_control_type,&
                                               rtp_control_type
    USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
@@ -48,8 +41,6 @@ MODULE rt_delta_pulse
                                               cp_fm_set_all,&
                                               cp_fm_to_fm,&
                                               cp_fm_type
-   USE cp_fm_vect,                      ONLY: cp_fm_vect_dealloc
-   USE cp_para_types,                   ONLY: cp_para_env_type
    USE dbcsr_api,                       ONLY: &
         dbcsr_add, dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_get_info, &
         dbcsr_init_p, dbcsr_p_type, dbcsr_set, dbcsr_type, dbcsr_type_antisymmetric, &
@@ -60,8 +51,7 @@ MODULE rt_delta_pulse
                                               section_vals_val_get
    USE kinds,                           ONLY: dp
    USE mathconstants,                   ONLY: one,&
-                                              twopi,&
-                                              zero
+                                              twopi
    USE moments_utils,                   ONLY: get_reference_point
    USE parallel_gemm_api,               ONLY: parallel_gemm
    USE particle_types,                  ONLY: particle_type
@@ -75,6 +65,7 @@ MODULE rt_delta_pulse
                                               build_local_moment_matrix
    USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
    USE rt_propagation_types,            ONLY: rt_prop_type
+   USE rt_propagation_utils,            ONLY: orthonormalize_complex_mos
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -300,7 +291,7 @@ CONTAINS
       IF (len_rep) CALL dbcsr_deallocate_matrix_set(matrix_r)
 
       ! orthonormalize afterwards
-      CALL orthonormalize_complex_mos(qs_env, mos_old)
+      CALL orthonormalize_complex_mos(qs_env, mos_old, orthogonal_basis=.FALSE.)
 
       CALL timestop(handle)
 
@@ -380,7 +371,7 @@ CONTAINS
       CALL dbcsr_deallocate_matrix(sinmat)
 
       ! orthonormalize afterwards
-      CALL orthonormalize_complex_mos(qs_env, mos_old)
+      CALL orthonormalize_complex_mos(qs_env, mos_old, orhtogonal_basis=.FALSE.)
 
       CALL timestop(handle)
 
@@ -558,122 +549,10 @@ CONTAINS
       CALL dbcsr_deallocate_matrix_set(matrix_mag)
 
       ! orthonormalize afterwards
-      CALL orthonormalize_complex_mos(qs_env, mos_old)
+      CALL orthonormalize_complex_mos(qs_env, mos_old, orthogonal_basis=.FALSE.)
 
       CALL timestop(handle)
 
    END SUBROUTINE apply_delta_pulse_mag
-
-! **************************************************************************************************
-!> \brief orthonormalize complex mos, e. g. after non-unitary transformations using Löwdin's algorithm
-!> \param qs_env ...
-!> \param coeffs ...
-! **************************************************************************************************
-   SUBROUTINE orthonormalize_complex_mos(qs_env, coeffs)
-      TYPE(qs_environment_type), POINTER                 :: qs_env
-      TYPE(cp_fm_p_type), DIMENSION(:), INTENT(INOUT), &
-         POINTER                                         :: coeffs
-
-      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:)        :: eigenvalues_sqrt
-      INTEGER                                            :: im, ispin, j, nao, nmo, nspins, re
-      REAL(kind=dp), ALLOCATABLE, DIMENSION(:)           :: eigenvalues
-      TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
-      TYPE(cp_cfm_type)                                  :: oo_c, oo_v, oo_vt
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: coeffs_tmp
-      TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_tmp
-      TYPE(cp_fm_type)                                   :: oo_1, oo_2, S_fm, tmp
-      TYPE(cp_para_env_type), POINTER                    :: para_env
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
-      TYPE(dft_control_type), POINTER                    :: dft_control
-      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
-
-      NULLIFY (para_env, blacs_env, dft_control, matrix_s, mos)
-      CALL get_qs_env(qs_env, &
-                      blacs_env=blacs_env, &
-                      dft_control=dft_control, &
-                      matrix_s=matrix_s, &
-                      mos=mos, &
-                      para_env=para_env)
-      nspins = dft_control%nspins
-      CALL cp_fm_get_info(coeffs(1)%matrix, nrow_global=nao)
-
-      ! get overlap matrix
-      CALL cp_fm_struct_create(fm_struct_tmp, nrow_global=nao, ncol_global=nao, &
-                               context=blacs_env, para_env=para_env)
-      CALL cp_fm_create(S_fm, matrix_struct=fm_struct_tmp, name="overlap fm")
-      CALL cp_fm_struct_release(fm_struct_tmp)
-      ! copy overlap matrix
-      CALL copy_dbcsr_to_fm(matrix_s(1)%matrix, S_fm)
-
-      DO ispin = 1, nspins
-         CALL get_mo_set(mos(ispin)%mo_set, nmo=nmo)
-         CALL cp_fm_struct_create(fm_struct_tmp, para_env=para_env, context=blacs_env, &
-                                  nrow_global=nmo, ncol_global=nmo)
-         CALL cp_fm_create(oo_1, matrix_struct=fm_struct_tmp, name="oo_1")
-         CALL cp_fm_create(oo_2, matrix_struct=fm_struct_tmp, name="oo_2")
-         CALL cp_fm_struct_release(fm_struct_tmp)
-
-         CALL cp_fm_create(tmp, matrix_struct=coeffs(2*ispin - 1)%matrix%matrix_struct, name="tmp_mat")
-         ! get the complex overlap matrix in MO basis
-         ! x^T S x + y^T S y + i (-y^TS x+x^T S y)
-         CALL parallel_gemm("N", "N", nao, nmo, nao, 1.0_dp, S_fm, coeffs(2*ispin - 1)%matrix, 0.0_dp, tmp)
-         CALL parallel_gemm("T", "N", nmo, nmo, nao, 1.0_dp, coeffs(2*ispin - 1)%matrix, tmp, 0.0_dp, oo_1)
-         CALL parallel_gemm("T", "N", nmo, nmo, nao, -1.0_dp, coeffs(2*ispin)%matrix, tmp, 0.0_dp, oo_2)
-
-         CALL parallel_gemm("N", "N", nao, nmo, nao, 1.0_dp, S_fm, coeffs(2*ispin)%matrix, 0.0_dp, tmp)
-         CALL parallel_gemm("T", "N", nmo, nmo, nao, 1.0_dp, coeffs(2*ispin)%matrix, tmp, 1.0_dp, oo_1)
-         CALL parallel_gemm("T", "N", nmo, nmo, nao, 1.0_dp, coeffs(2*ispin - 1)%matrix, tmp, 1.0_dp, oo_2)
-         CALL cp_fm_release(tmp)
-
-         ! complex Löwdin
-         CALL cp_cfm_create(oo_c, oo_1%matrix_struct)
-         CALL cp_cfm_create(oo_v, oo_1%matrix_struct)
-         CALL cp_cfm_create(oo_vt, oo_1%matrix_struct)
-         oo_c%local_data = CMPLX(oo_1%local_data, oo_2%local_data, KIND=dp)
-
-         ALLOCATE (eigenvalues(nmo))
-         ALLOCATE (eigenvalues_sqrt(nmo))
-         CALL cp_cfm_heevd(oo_c, oo_v, eigenvalues)
-         eigenvalues_sqrt(:) = CMPLX(one/SQRT(eigenvalues(:)), zero, dp)
-         CALL cp_cfm_to_cfm(oo_v, oo_vt)
-         CALL cp_cfm_column_scale(oo_v, eigenvalues_sqrt)
-         DEALLOCATE (eigenvalues)
-         DEALLOCATE (eigenvalues_sqrt)
-         CALL parallel_gemm('N', 'C', nmo, nmo, nmo, (1.0_dp, 0.0_dp), &
-                            oo_v, oo_vt, (0.0_dp, 0.0_dp), oo_c)
-         oo_1%local_data = REAL(oo_c%local_data, KIND=dp)
-         oo_2%local_data = AIMAG(oo_c%local_data)
-         CALL cp_cfm_release(oo_c)
-         CALL cp_cfm_release(oo_v)
-         CALL cp_cfm_release(oo_vt)
-
-         ! transform coefficients accordingly
-         NULLIFY (coeffs_tmp)
-         ALLOCATE (coeffs_tmp(2))
-         DO j = 1, 2
-            NULLIFY (coeffs_tmp(j)%matrix)
-            ALLOCATE (coeffs_tmp(j)%matrix)
-            CALL cp_fm_create(coeffs_tmp(j)%matrix, matrix_struct=coeffs(2*(ispin - 1) + j)%matrix%matrix_struct)
-         END DO
-
-         ! indices for coeffs_tmp
-         re = 1
-         im = 2
-         CALL parallel_gemm("N", "N", nao, nmo, nmo, one, coeffs(2*ispin - 1)%matrix, oo_1, zero, coeffs_tmp(re)%matrix)
-         CALL parallel_gemm("N", "N", nao, nmo, nmo, one, coeffs(2*ispin - 1)%matrix, oo_2, zero, coeffs_tmp(im)%matrix)
-
-         CALL parallel_gemm("N", "N", nao, nmo, nmo, -one, coeffs(2*ispin)%matrix, oo_2, zero, coeffs(2*ispin - 1)%matrix)
-         CALL cp_fm_scale_and_add(one, coeffs(2*ispin - 1)%matrix, one, coeffs_tmp(re)%matrix)
-
-         CALL parallel_gemm("N", "N", nao, nmo, nmo, one, coeffs(2*ispin)%matrix, oo_1, one, coeffs_tmp(im)%matrix)
-         CALL cp_fm_to_fm(coeffs_tmp(im)%matrix, coeffs(2*ispin)%matrix)
-
-         CALL cp_fm_vect_dealloc(coeffs_tmp)
-         CALL cp_fm_release(oo_1)
-         CALL cp_fm_release(oo_2)
-      END DO
-      CALL cp_fm_release(S_fm)
-
-   END SUBROUTINE orthonormalize_complex_mos
 
 END MODULE rt_delta_pulse

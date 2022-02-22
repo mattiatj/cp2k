@@ -115,7 +115,7 @@ MODULE rt_propagation_types
       LOGICAL                                     :: converged
       LOGICAL                                     :: matrix_update
       LOGICAL                                     :: write_restart
-      TYPE(rtp_history_type), POINTER              :: history
+      TYPE(rtp_history_type), POINTER              :: history, history_ortho
       TYPE(cp_fm_struct_type), POINTER            :: ao_ao_fmstruct
       INTEGER                                     :: lanzcos_max_iter
       REAL(KIND=dp)                               :: lanzcos_threshold
@@ -235,10 +235,6 @@ CONTAINS
          END DO
          IF (rtp_control%canonical_ortho) THEN
             ndep = rtp_control%nlindep
-            CALL cp_fm_struct_create(fmstruct=tmp_fmstruct, &
-                                     nrow_block=nrow_block, ncol_block=ncol_block, &
-                                     nrow_global=nao - ndep, ncol_global=nmo, &
-                                     template_fmstruct=ao_mo_fmstruct)
 
             ALLOCATE (rtp%mos_ortho)
             ALLOCATE (rtp%mos_ortho%old(2*nspin))
@@ -246,6 +242,11 @@ CONTAINS
             ALLOCATE (rtp%mos_ortho%next(2*nspin))
             NULLIFY (rtp%mos_ortho%admm)
             DO i = 1, nspin
+               CALL cp_fm_struct_get(mos(i)%mo_set%mo_coeff%matrix_struct, ncol_global=nmo)
+               CALL cp_fm_struct_create(fmstruct=tmp_fmstruct, &
+                                        nrow_block=nrow_block, ncol_block=ncol_block, &
+                                        nrow_global=nao - ndep, ncol_global=nmo, &
+                                        template_fmstruct=ao_mo_fmstruct)
                DO j = 1, 2
                   NULLIFY (rtp%mos_ortho%old(2*(i - 1) + j)%matrix)
                   NULLIFY (rtp%mos_ortho%new(2*(i - 1) + j)%matrix)
@@ -260,9 +261,8 @@ CONTAINS
                                     matrix_struct=tmp_fmstruct, &
                                     name="mos_ortho_next"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
                END DO
+               CALL cp_fm_struct_release(tmp_fmstruct)
             END DO
-
-            CALL cp_fm_struct_release(tmp_fmstruct)
 
             ! transformation matrices ao basis <--> canonical basis
             CALL cp_fm_struct_create(fmstruct=tmp_fmstruct, &
@@ -360,6 +360,8 @@ CONTAINS
 !> \param mos_ortho_new ...
 !> \param mos_ortho_old ...
 !> \param mos_ortho_next ...
+!> \param xmatrix ...
+!> \param ymatrix ...
 !> \param S_inv ...
 !> \param S_half ...
 !> \param S_minus_half ...
@@ -376,7 +378,7 @@ CONTAINS
 !> \param admm_mos ...
 ! **************************************************************************************************
    SUBROUTINE get_rtp(rtp, exp_H_old, exp_H_new, H_last_iter, rho_old, rho_next, rho_new, mos, mos_new, mos_old, mos_next, &
-                      mos_ortho, mos_ortho_new, mos_ortho_old, mos_ortho_next, S_inv, S_half, S_minus_half, B_mat, C_mat, &
+             mos_ortho, mos_ortho_new, mos_ortho_old, mos_ortho_next, xmatrix, ymatrix, S_inv, S_half, S_minus_half, B_mat, C_mat, &
                       propagator_matrix, mixing, mixing_factor, S_der, dt, nsteps, SinvH, SinvB, admm_mos)
 
       TYPE(rt_prop_type), POINTER                        :: rtp
@@ -390,6 +392,7 @@ CONTAINS
       TYPE(cp_fm_p_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: mos_ortho_new, mos_ortho_old, &
                                                             mos_ortho_next
+      TYPE(cp_fm_type), OPTIONAL, POINTER                :: xmatrix, ymatrix
       TYPE(dbcsr_type), OPTIONAL, POINTER                :: S_inv, S_half, S_minus_half, B_mat
       TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: C_mat, propagator_matrix
@@ -422,6 +425,9 @@ CONTAINS
       IF (PRESENT(mos_ortho_old)) mos_ortho_old => rtp%mos_ortho%old
       IF (PRESENT(mos_ortho_new)) mos_ortho_new => rtp%mos_ortho%new
       IF (PRESENT(mos_ortho_next)) mos_ortho_next => rtp%mos_ortho%next
+
+      IF (PRESENT(xmatrix)) xmatrix => rtp%canon_ortho%xmatrix
+      IF (PRESENT(ymatrix)) ymatrix => rtp%canon_ortho%ymatrix
 
       IF (PRESENT(S_inv)) S_inv => rtp%S_inv
       IF (PRESENT(S_half)) S_half => rtp%S_half
@@ -510,18 +516,28 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief ...
 !> \param rtp ...
+!> \param rtp_control ...
 !> \param aspc_order ...
 ! **************************************************************************************************
-   SUBROUTINE rtp_history_create(rtp, aspc_order)
+   SUBROUTINE rtp_history_create(rtp, rtp_control, aspc_order)
       TYPE(rt_prop_type), INTENT(inout)                  :: rtp
+      TYPE(rtp_control_type), INTENT(IN), POINTER        :: rtp_control
       INTEGER, INTENT(in)                                :: aspc_order
 
       INTEGER                                            :: i, j, nmat
-      TYPE(rtp_history_type), POINTER                    :: history
+      TYPE(rtp_history_type), POINTER                    :: history, history_ortho
 
       NULLIFY (history)
       ALLOCATE (rtp%history)
       history => rtp%history
+
+      NULLIFY (rtp%history_ortho)
+      IF (rtp_control%canonical_ortho) THEN
+         ALLOCATE (rtp%history_ortho)
+         NULLIFY (history_ortho)
+         history_ortho => rtp%history_ortho
+         NULLIFY (history_ortho%rho_history, history_ortho%mo_history, history_ortho%s_history)
+      END IF
 
       NULLIFY (history%rho_history, history%mo_history, history%s_history)
       IF (aspc_order .GT. 0) THEN
@@ -552,6 +568,22 @@ CONTAINS
             DO i = 1, aspc_order
                NULLIFY (history%s_history(i)%matrix)
             END DO
+            IF (rtp_control%canonical_ortho) THEN
+               nmat = SIZE(rtp%mos_ortho%old)
+               ALLOCATE (history_ortho%mo_history(nmat, aspc_order))
+               DO i = 1, nmat
+                  DO j = 1, aspc_order
+                     NULLIFY (history_ortho%mo_history(i, j)%matrix)
+                     CALL cp_fm_create(history_ortho%mo_history(i, j)%matrix, &
+                                       matrix_struct=rtp%mos_ortho%new(i)%matrix%matrix_struct, &
+                                       name="mo_hist_ortho"//TRIM(ADJUSTL(cp_to_string(i))))
+                  END DO
+               END DO
+               ALLOCATE (history_ortho%s_history(aspc_order))
+               DO i = 1, aspc_order
+                  NULLIFY (history_ortho%s_history(i)%matrix)
+               END DO
+            END IF
          END IF
       END IF
 
@@ -587,6 +619,29 @@ CONTAINS
          DEALLOCATE (rtp%history%s_history)
       END IF
       DEALLOCATE (rtp%history)
+
+      IF (ASSOCIATED(rtp%history_ortho)) THEN
+         IF (ASSOCIATED(rtp%history_ortho%rho_history)) THEN
+            CALL dbcsr_deallocate_matrix_set(rtp%history_ortho%rho_history)
+         END IF
+
+         IF (ASSOCIATED(rtp%history_ortho%mo_history)) THEN
+            DO i = 1, SIZE(rtp%history_ortho%mo_history, 1)
+               DO j = 1, SIZE(rtp%history_ortho%mo_history, 2)
+                  CALL cp_fm_release(rtp%history_ortho%mo_history(i, j)%matrix)
+               END DO
+            END DO
+            DEALLOCATE (rtp%history_ortho%mo_history)
+         END IF
+         IF (ASSOCIATED(rtp%history_ortho%s_history)) THEN
+            DO i = 1, SIZE(rtp%history_ortho%s_history)
+               IF (ASSOCIATED(rtp%history_ortho%s_history(i)%matrix)) &
+                  CALL dbcsr_deallocate_matrix(rtp%history_ortho%s_history(i)%matrix)
+            END DO
+            DEALLOCATE (rtp%history_ortho%s_history)
+         END IF
+         DEALLOCATE (rtp%history_ortho)
+      END IF
 
    END SUBROUTINE rtp_history_release
 

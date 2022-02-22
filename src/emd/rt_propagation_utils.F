@@ -13,12 +13,19 @@
 MODULE rt_propagation_utils
    USE atomic_kind_types,               ONLY: atomic_kind_type
    USE cp_blacs_env,                    ONLY: cp_blacs_env_type
+   USE cp_cfm_basic_linalg,             ONLY: cp_cfm_column_scale
+   USE cp_cfm_diag,                     ONLY: cp_cfm_heevd
+   USE cp_cfm_types,                    ONLY: cp_cfm_create,&
+                                              cp_cfm_release,&
+                                              cp_cfm_to_cfm,&
+                                              cp_cfm_type
    USE cp_control_types,                ONLY: dft_control_type,&
                                               rtp_control_type
    USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
                                               cp_dbcsr_plus_fm_fm_t,&
                                               dbcsr_deallocate_matrix_set
-   USE cp_fm_basic_linalg,              ONLY: cp_fm_column_scale
+   USE cp_fm_basic_linalg,              ONLY: cp_fm_column_scale,&
+                                              cp_fm_scale_and_add
    USE cp_fm_diag,                      ONLY: cp_fm_ortho_canon
    USE cp_fm_struct,                    ONLY: cp_fm_struct_create,&
                                               cp_fm_struct_release,&
@@ -31,9 +38,11 @@ MODULE rt_propagation_utils
                                               cp_fm_to_fm,&
                                               cp_fm_type
    USE cp_fm_vect,                      ONLY: cp_fm_vect_dealloc
+   USE cp_gemm_interface,               ONLY: cp_gemm
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_get_default_unit_nr,&
                                               cp_logger_type
+   USE cp_output_handling,              ONLY: cp_print_key_unit_nr
    USE cp_para_types,                   ONLY: cp_para_env_type
    USE dbcsr_api,                       ONLY: &
         dbcsr_add, dbcsr_binary_read, dbcsr_checksum, dbcsr_copy, dbcsr_copy_into_existing, &
@@ -48,7 +57,8 @@ MODULE rt_propagation_utils
                                               section_vals_val_get
    USE kinds,                           ONLY: default_path_length,&
                                               dp
-   USE mathconstants,                   ONLY: zero
+   USE mathconstants,                   ONLY: one,&
+                                              zero
    USE orbital_pointers,                ONLY: ncoset
    USE particle_types,                  ONLY: particle_type
    USE qs_density_matrices,             ONLY: calculate_density_matrix
@@ -60,7 +70,8 @@ MODULE rt_propagation_utils
                                               qs_ks_env_type
    USE qs_mo_io,                        ONLY: read_mo_set_from_restart,&
                                               read_rt_mos_from_restart
-   USE qs_mo_types,                     ONLY: mo_set_p_type
+   USE qs_mo_types,                     ONLY: get_mo_set,&
+                                              mo_set_p_type
    USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
    USE qs_overlap,                      ONLY: build_overlap_matrix
    USE qs_rho_methods,                  ONLY: qs_rho_update_rho
@@ -80,7 +91,8 @@ MODULE rt_propagation_utils
              calc_update_rho_sparse, &
              calculate_P_imaginary, &
              rt_canon_ortho, &
-             transform_to_canon_ortho_coeffs
+             transform_to_canon_ortho_coeffs, &
+             orthonormalize_complex_mos
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'rt_propagation_utils'
 
@@ -530,21 +542,18 @@ CONTAINS
 !> \brief ...
 !> \param qs_env ...
 !> \param calc_trsfmatrices ...
-!> \param inverses ...
 ! **************************************************************************************************
-   SUBROUTINE rt_canon_ortho(qs_env, calc_trsfmatrices, inverses)
+   SUBROUTINE rt_canon_ortho(qs_env, calc_trsfmatrices)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       LOGICAL                                            :: calc_trsfmatrices
-      LOGICAL, OPTIONAL                                  :: inverses
 
-      INTEGER                                            :: i, nao, ndep
-      LOGICAL                                            :: my_inverses
+      INTEGER                                            :: nao, ndep, output_unit
       REAL(kind=dp)                                      :: epseigval
       REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: seigval
-      REAL(kind=dp), DIMENSION(:, :), POINTER            :: local_data
       TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
       TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_tmp
       TYPE(cp_fm_type), POINTER                          :: mat_tmp, mat_tmp2, s_fm
+      TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(cp_para_env_type), POINTER                    :: para_env
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
       TYPE(dft_control_type), POINTER                    :: dft_control
@@ -552,20 +561,15 @@ CONTAINS
       TYPE(rtp_control_type), POINTER                    :: rtp_control
       TYPE(section_vals_type), POINTER                   :: input, scf_section
 
-      ! calc_trsfmatrices = .true.
-      my_inverses = .FALSE.
-      IF (PRESENT(inverses)) my_inverses = inverses
-
-      NULLIFY (matrix_s, para_env, blacs_env, input, scf_section, rtp_control, dft_control, rtp)
+      NULLIFY (matrix_s, para_env, blacs_env, input, scf_section, rtp_control, dft_control, rtp, logger)
       CALL get_qs_env(qs_env, &
+                      blacs_env=blacs_env, &
+                      dft_control=dft_control, &
+                      input=input, &
                       matrix_s=matrix_s, &
                       para_env=para_env, &
-                      blacs_env=blacs_env, &
-                      input=input, &
-                      dft_control=dft_control, &
                       rtp=rtp)
       CALL dbcsr_get_info(matrix_s(1)%matrix, nfullrows_total=nao)
-      WRITE (*, *) 'nao', nao
 
       ALLOCATE (seigval(nao))
       scf_section => section_vals_get_subs_vals(input, "DFT%SCF")
@@ -583,7 +587,6 @@ CONTAINS
       IF (calc_trsfmatrices) CALL cp_fm_create(mat_tmp2, matrix_struct=fm_struct_tmp, name="temporary fm")
       CALL cp_fm_struct_release(fm_struct_tmp)
 
-      ! CALL dbcsr_print(matrix_s(1)%matrix, matlab_format=.TRUE.)
       CALL copy_dbcsr_to_fm(matrix_s(1)%matrix, s_fm)
 
       IF (.NOT. calc_trsfmatrices) THEN
@@ -592,19 +595,20 @@ CONTAINS
          CALL cp_fm_ortho_canon(s_fm, mat_tmp, ndep, epseigval, seigval, mat_tmp2)
       END IF
       rtp_control%nlindep = ndep
-      WRITE (*, *) 'ndep', ndep
 
       IF (calc_trsfmatrices) THEN
          CPASSERT(ASSOCIATED(rtp%canon_ortho))
          CALL cp_fm_to_fm(mat_tmp, rtp%canon_ortho%xmatrix, nao - ndep, 1, 1)
          CALL cp_fm_to_fm(mat_tmp2, rtp%canon_ortho%ymatrix, nao - ndep, 1, 1)
 
-         CALL cp_fm_get_info(rtp%canon_ortho%xmatrix, local_data=local_data)
-
-         DO i = 1, nao
-            WRITE (*, *) local_data(i, :)
-         END DO
-
+         logger => cp_get_default_logger()
+         scf_section => section_vals_get_subs_vals(input, "DFT%REAL_TIME_PROPAGATION")
+         output_unit = cp_print_key_unit_nr(logger, scf_section, "PRINT%PROGRAM_RUN_INFO", &
+                                            extension=".scfLog")
+         IF (output_unit > 0) THEN
+            WRITE (output_unit, FMT="(/,(T3,A,T76,I5))") &
+               "Number of truncated linear dependent basis functions for RTP:", ndep
+         END IF
       END IF
 
       CALL cp_fm_release(s_fm)
@@ -617,31 +621,165 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief ...
 !> \param qs_env ...
-!> \param rtp ...
+!> \param coeffs ...
+!> \param coeffs_ortho ...
 ! **************************************************************************************************
-   SUBROUTINE transform_to_canon_ortho_coeffs(qs_env, rtp)!, rtpmos)
+   SUBROUTINE transform_to_canon_ortho_coeffs(qs_env, coeffs, coeffs_ortho)
       TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(cp_fm_p_type), DIMENSION(:), INTENT(IN), &
+         POINTER                                         :: coeffs
+      TYPE(cp_fm_p_type), DIMENSION(:), INTENT(out), &
+         POINTER                                         :: coeffs_ortho
+
+      INTEGER                                            :: ispin, j, nao, nmo, noo
+      TYPE(cp_fm_type), POINTER                          :: xmatrix, ymatrix
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
+      TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(rt_prop_type), POINTER                        :: rtp
 
-      INTEGER                                            :: nrow
-      REAL(kind=dp)                                      :: l
-      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: local_data
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: new_ortho, next_ortho, old_ortho
+      NULLIFY (dft_control, matrix_s, rtp)
+      CALL get_qs_env(qs_env, &
+                      dft_control=dft_control, &
+                      matrix_s=matrix_s, &
+                      rtp=rtp)
 
-! TYPE(cp_fm_p_type), POINTER, DIMENSION(:)          :: rtpmos
+      CALL dbcsr_get_info(matrix_s(1)%matrix, nfullrows_total=nao)
+      noo = nao - dft_control%rtp_control%nlindep
 
-      CALL get_qs_env(qs_env)
-      l = rtp%dt
+      CALL get_rtp(rtp, xmatrix=xmatrix, ymatrix=ymatrix)
+      CPASSERT(ASSOCIATED(ymatrix))
 
-      NULLIFY (old_ortho, new_ortho, next_ortho)
-      CALL get_rtp(rtp, mos_ortho_new=new_ortho, mos_ortho_old=old_ortho, mos_ortho_next=next_ortho)
+      DO ispin = 1, dft_control%nspins ! spins
+         CALL cp_fm_get_info(coeffs(2*ispin)%matrix, ncol_global=nmo)
+         DO j = 1, 2               ! real and imaginary part
+            CALL cp_gemm("T", "N", noo, nmo, nao, 1.0_dp, ymatrix, coeffs(2*(ispin - 1) + j)%matrix, 0.0_dp, &
+                         coeffs_ortho(2*(ispin - 1) + j)%matrix)
+         END DO
+      END DO
 
-      CALL cp_fm_get_info(next_ortho(1)%matrix, local_data=local_data, nrow_global=nrow)
-
-      ! do i = 1, nrow
-      !    write(*,*) local_data (i,:)
-      ! enddo
+      ! normalize as ymatrix does NOT correspond to a unitary transformation
+      CALL orthonormalize_complex_mos(qs_env, coeffs_ortho, .TRUE.)
 
    END SUBROUTINE transform_to_canon_ortho_coeffs
+
+! **************************************************************************************************
+!> \brief orthonormalize complex mos, e. g. after non-unitary transformations using Löwdin's algorithm
+!>        refactored  and extended from rt_delta_pulse.F
+!> \param qs_env ...
+!> \param coeffs ...
+!> \param orthogonal_basis set to .TRUE. if the basis functions are orthogonal, i. e. S = identity
+! **************************************************************************************************
+   SUBROUTINE orthonormalize_complex_mos(qs_env, coeffs, orthogonal_basis)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(cp_fm_p_type), DIMENSION(:), INTENT(INOUT), &
+         POINTER                                         :: coeffs
+      LOGICAL, INTENT(IN)                                :: orthogonal_basis
+
+      COMPLEX(KIND=dp), ALLOCATABLE, DIMENSION(:)        :: eigenvalues_sqrt
+      INTEGER                                            :: im, ispin, j, nao, nmo, nspins, re
+      REAL(kind=dp), ALLOCATABLE, DIMENSION(:)           :: eigenvalues
+      TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
+      TYPE(cp_cfm_type)                                  :: oo_c, oo_v, oo_vt
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: coeffs_tmp
+      TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_tmp
+      TYPE(cp_fm_type)                                   :: oo_1, oo_2, S_fm, tmp
+      TYPE(cp_para_env_type), POINTER                    :: para_env
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
+
+      NULLIFY (para_env, blacs_env, dft_control, matrix_s, mos)
+      CALL get_qs_env(qs_env, &
+                      blacs_env=blacs_env, &
+                      dft_control=dft_control, &
+                      matrix_s=matrix_s, &
+                      mos=mos, &
+                      para_env=para_env)
+      nspins = dft_control%nspins
+      CALL cp_fm_get_info(coeffs(1)%matrix, nrow_global=nao)
+
+      ! get overlap matrix
+      CALL cp_fm_struct_create(fm_struct_tmp, nrow_global=nao, ncol_global=nao, &
+                               context=blacs_env, para_env=para_env)
+      CALL cp_fm_create(S_fm, matrix_struct=fm_struct_tmp, name="overlap fm")
+      CALL cp_fm_struct_release(fm_struct_tmp)
+      IF (.NOT. orthogonal_basis) THEN
+         ! copy overlap matrix
+         CALL copy_dbcsr_to_fm(matrix_s(1)%matrix, S_fm)
+      ELSE
+         ! set overlap matrix to identity
+         CALL cp_fm_set_all(S_fm, zero, one)
+      END IF
+
+      DO ispin = 1, nspins
+         CALL get_mo_set(mos(ispin)%mo_set, nmo=nmo)
+         CALL cp_fm_struct_create(fm_struct_tmp, para_env=para_env, context=blacs_env, &
+                                  nrow_global=nmo, ncol_global=nmo)
+         CALL cp_fm_create(oo_1, matrix_struct=fm_struct_tmp, name="oo_1")
+         CALL cp_fm_create(oo_2, matrix_struct=fm_struct_tmp, name="oo_2")
+         CALL cp_fm_struct_release(fm_struct_tmp)
+
+         CALL cp_fm_create(tmp, matrix_struct=coeffs(2*ispin - 1)%matrix%matrix_struct, name="tmp_mat")
+         ! get the complex overlap matrix in MO basis
+         ! x^T S x + y^T S y + i (-y^TS x+x^T S y)
+         CALL parallel_gemm("N", "N", nao, nmo, nao, 1.0_dp, S_fm, coeffs(2*ispin - 1)%matrix, 0.0_dp, tmp)
+         CALL parallel_gemm("T", "N", nmo, nmo, nao, 1.0_dp, coeffs(2*ispin - 1)%matrix, tmp, 0.0_dp, oo_1)
+         CALL parallel_gemm("T", "N", nmo, nmo, nao, -1.0_dp, coeffs(2*ispin)%matrix, tmp, 0.0_dp, oo_2)
+
+         CALL parallel_gemm("N", "N", nao, nmo, nao, 1.0_dp, S_fm, coeffs(2*ispin)%matrix, 0.0_dp, tmp)
+         CALL parallel_gemm("T", "N", nmo, nmo, nao, 1.0_dp, coeffs(2*ispin)%matrix, tmp, 1.0_dp, oo_1)
+         CALL parallel_gemm("T", "N", nmo, nmo, nao, 1.0_dp, coeffs(2*ispin - 1)%matrix, tmp, 1.0_dp, oo_2)
+         CALL cp_fm_release(tmp)
+
+         ! complex Löwdin
+         CALL cp_cfm_create(oo_c, oo_1%matrix_struct)
+         CALL cp_cfm_create(oo_v, oo_1%matrix_struct)
+         CALL cp_cfm_create(oo_vt, oo_1%matrix_struct)
+         oo_c%local_data = CMPLX(oo_1%local_data, oo_2%local_data, KIND=dp)
+
+         ALLOCATE (eigenvalues(nmo))
+         ALLOCATE (eigenvalues_sqrt(nmo))
+         CALL cp_cfm_heevd(oo_c, oo_v, eigenvalues)
+         eigenvalues_sqrt(:) = CMPLX(one/SQRT(eigenvalues(:)), zero, dp)
+         CALL cp_cfm_to_cfm(oo_v, oo_vt)
+         CALL cp_cfm_column_scale(oo_v, eigenvalues_sqrt)
+         DEALLOCATE (eigenvalues)
+         DEALLOCATE (eigenvalues_sqrt)
+         CALL parallel_gemm('N', 'C', nmo, nmo, nmo, (1.0_dp, 0.0_dp), &
+                            oo_v, oo_vt, (0.0_dp, 0.0_dp), oo_c)
+         oo_1%local_data = REAL(oo_c%local_data, KIND=dp)
+         oo_2%local_data = AIMAG(oo_c%local_data)
+         CALL cp_cfm_release(oo_c)
+         CALL cp_cfm_release(oo_v)
+         CALL cp_cfm_release(oo_vt)
+
+         ! transform coefficients accordingly
+         NULLIFY (coeffs_tmp)
+         ALLOCATE (coeffs_tmp(2))
+         DO j = 1, 2
+            NULLIFY (coeffs_tmp(j)%matrix)
+            ALLOCATE (coeffs_tmp(j)%matrix)
+            CALL cp_fm_create(coeffs_tmp(j)%matrix, matrix_struct=coeffs(2*(ispin - 1) + j)%matrix%matrix_struct)
+         END DO
+
+         ! indices for coeffs_tmp
+         re = 1
+         im = 2
+         CALL parallel_gemm("N", "N", nao, nmo, nmo, one, coeffs(2*ispin - 1)%matrix, oo_1, zero, coeffs_tmp(re)%matrix)
+         CALL parallel_gemm("N", "N", nao, nmo, nmo, one, coeffs(2*ispin - 1)%matrix, oo_2, zero, coeffs_tmp(im)%matrix)
+
+         CALL parallel_gemm("N", "N", nao, nmo, nmo, -one, coeffs(2*ispin)%matrix, oo_2, zero, coeffs(2*ispin - 1)%matrix)
+         CALL cp_fm_scale_and_add(one, coeffs(2*ispin - 1)%matrix, one, coeffs_tmp(re)%matrix)
+
+         CALL parallel_gemm("N", "N", nao, nmo, nmo, one, coeffs(2*ispin)%matrix, oo_1, one, coeffs_tmp(im)%matrix)
+         CALL cp_fm_to_fm(coeffs_tmp(im)%matrix, coeffs(2*ispin)%matrix)
+
+         CALL cp_fm_vect_dealloc(coeffs_tmp)
+         CALL cp_fm_release(oo_1)
+         CALL cp_fm_release(oo_2)
+      END DO
+      CALL cp_fm_release(S_fm)
+
+   END SUBROUTINE orthonormalize_complex_mos
 
 END MODULE rt_propagation_utils
