@@ -38,11 +38,10 @@ MODULE rt_propagation_types
                                               cp_fm_type
    USE cp_fm_vect,                      ONLY: cp_fm_vect_dealloc
    USE cp_log_handling,                 ONLY: cp_to_string
-   USE dbcsr_api,                       ONLY: dbcsr_create,&
-                                              dbcsr_deallocate_matrix,&
-                                              dbcsr_init_p,&
-                                              dbcsr_p_type,&
-                                              dbcsr_type
+   USE dbcsr_api,                       ONLY: &
+        dbcsr_create, dbcsr_deallocate_matrix, dbcsr_distribution_get, dbcsr_distribution_new, &
+        dbcsr_distribution_release, dbcsr_distribution_type, dbcsr_get_info, dbcsr_init_p, &
+        dbcsr_p_type, dbcsr_type, dbcsr_type_no_symmetry
    USE kinds,                           ONLY: dp
    USE qs_matrix_pools,                 ONLY: mpools_get,&
                                               qs_matrix_pools_type
@@ -78,6 +77,8 @@ MODULE rt_propagation_types
    TYPE rtp_canon_ortho
       TYPE(cp_fm_type), POINTER                   :: xmatrix
       TYPE(cp_fm_type), POINTER                   :: ymatrix
+      TYPE(dbcsr_type), POINTER                   :: xmatrix_dbcsr
+      TYPE(dbcsr_type), POINTER                   :: ymatrix_dbcsr
    END TYPE rtp_canon_ortho
 
    TYPE rt_prop_type
@@ -144,8 +145,9 @@ CONTAINS
 !> \param template ...
 !> \param linear_scaling ...
 !> \param mos_aux ...
+!> \param dbcsr_dist ...
 ! **************************************************************************************************
-   SUBROUTINE rt_prop_create(rtp, mos, mpools, dft_control, template, linear_scaling, mos_aux)
+   SUBROUTINE rt_prop_create(rtp, mos, mpools, dft_control, template, linear_scaling, mos_aux, dbcsr_dist)
 
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
@@ -154,11 +156,16 @@ CONTAINS
       TYPE(dbcsr_type), POINTER                          :: template
       LOGICAL                                            :: linear_scaling
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos_aux
+      TYPE(dbcsr_distribution_type), POINTER             :: dbcsr_dist
 
-      INTEGER                                            :: i, j, nao, ncol_block, ndep, nmo, &
-                                                            nrow_block, nspin
+      INTEGER :: group, i, i_tmp, j, nao, nblkcols_total, nblkrows_total, ncol_block, ndep, nmo, &
+         npcols, nprows, nrow_block, nspin, remainder, size
+      INTEGER, DIMENSION(:), POINTER                     :: col_blk_sizes, col_dist_new, &
+                                                            row_blk_sizes, row_dist_new
+      INTEGER, DIMENSION(:, :), POINTER                  :: pgrid
       TYPE(cp_fm_pool_p_type), DIMENSION(:), POINTER     :: ao_mo_fm_pools
       TYPE(cp_fm_struct_type), POINTER                   :: ao_mo_fmstruct, tmp_fmstruct
+      TYPE(dbcsr_distribution_type), POINTER             :: dbcsr_dist_new
       TYPE(rtp_control_type), POINTER                    :: rtp_control
 
       CALL cite_reference(Kunert2003)
@@ -235,7 +242,7 @@ CONTAINS
          END DO
          IF (rtp_control%canonical_ortho) THEN
             ndep = rtp_control%nlindep
-
+            CPASSERT((nao - ndep) .GT. 0)
             ALLOCATE (rtp%mos_ortho)
             ALLOCATE (rtp%mos_ortho%old(2*nspin))
             ALLOCATE (rtp%mos_ortho%new(2*nspin))
@@ -271,10 +278,71 @@ CONTAINS
                                      template_fmstruct=ao_mo_fmstruct)
 
             ALLOCATE (rtp%canon_ortho)
+            NULLIFY (rtp%canon_ortho%xmatrix, rtp%canon_ortho%ymatrix)
             CALL cp_fm_create(rtp%canon_ortho%xmatrix, matrix_struct=tmp_fmstruct, name="xmatrix")
             CALL cp_fm_create(rtp%canon_ortho%ymatrix, matrix_struct=tmp_fmstruct, name="ymatrix")
 
             CALL cp_fm_struct_release(tmp_fmstruct)
+
+            !create corresponding dbcsr matrices with new distribution
+            ! use random distribution with same block sizes as the template (overlap matrix)
+            NULLIFY (pgrid)
+            CALL dbcsr_distribution_get(dbcsr_dist, group=group, pgrid=pgrid, npcols=npcols, nprows=nprows)
+            CALL dbcsr_get_info(template, nblkrows_total=nblkrows_total, nblkcols_total=nblkcols_total)
+
+            NULLIFY (row_dist_new, col_dist_new, dbcsr_dist_new)
+            ALLOCATE (row_dist_new(nblkrows_total), col_dist_new(nblkcols_total))
+            DO i = 1, nblkcols_total
+               col_dist_new(i) = MODULO(npcols - i, npcols)
+            END DO
+            DO i = 1, nblkrows_total
+               row_dist_new(i) = MODULO(nprows - i, nprows)
+            END DO
+            ALLOCATE (dbcsr_dist_new)
+            CALL dbcsr_distribution_new(dbcsr_dist_new, group=group, pgrid=pgrid, &
+                                        row_dist=row_dist_new, col_dist=col_dist_new)
+
+            ! evenly spaced block sizes
+            NULLIFY (row_blk_sizes, col_blk_sizes)
+            ALLOCATE (row_blk_sizes(nblkrows_total), col_blk_sizes(nblkcols_total))
+            ! rows
+            size = nao/nblkrows_total
+            remainder = MOD(nao, nblkrows_total)
+            DO i = 1, nblkrows_total
+               IF (remainder .GT. 0) THEN
+                  i_tmp = size + 1
+               ELSE
+                  i_tmp = size
+               END IF
+               row_blk_sizes(i) = i_tmp
+               remainder = remainder - 1
+            END DO
+            ! cols
+            size = (nao - ndep)/nblkcols_total
+            remainder = MOD((nao - ndep), nblkcols_total)
+            DO i = 1, nblkcols_total
+               IF (remainder .GT. 0) THEN
+                  i_tmp = size + 1
+               ELSE
+                  i_tmp = size
+               END IF
+               col_blk_sizes(i) = i_tmp
+               remainder = remainder - 1
+            END DO
+
+            ! create dbcsr matrices
+            NULLIFY (rtp%canon_ortho%xmatrix_dbcsr, rtp%canon_ortho%ymatrix_dbcsr)
+            ALLOCATE (rtp%canon_ortho%xmatrix_dbcsr, rtp%canon_ortho%ymatrix_dbcsr)
+
+            CALL dbcsr_create(rtp%canon_ortho%xmatrix_dbcsr, name='xmatrix', matrix_type=dbcsr_type_no_symmetry, &
+                              dist=dbcsr_dist_new, row_blk_size=row_blk_sizes, col_blk_size=col_blk_sizes)
+            CALL dbcsr_create(rtp%canon_ortho%ymatrix_dbcsr, name='xmatrix', matrix_type=dbcsr_type_no_symmetry, &
+                              dist=dbcsr_dist_new, row_blk_size=row_blk_sizes, col_blk_size=col_blk_sizes)
+
+            CALL dbcsr_distribution_release(dbcsr_dist_new)
+            DEALLOCATE (row_blk_sizes, col_blk_sizes)
+            DEALLOCATE (row_dist_new, col_dist_new, dbcsr_dist_new)
+
          END IF
       END IF
 
@@ -492,6 +560,10 @@ CONTAINS
             CALL cp_fm_release(rtp%canon_ortho%xmatrix)
          IF (ASSOCIATED(rtp%canon_ortho%ymatrix)) &
             CALL cp_fm_release(rtp%canon_ortho%ymatrix)
+         IF (ASSOCIATED(rtp%canon_ortho%xmatrix_dbcsr)) &
+            CALL dbcsr_deallocate_matrix(rtp%canon_ortho%xmatrix_dbcsr)
+         IF (ASSOCIATED(rtp%canon_ortho%ymatrix_dbcsr)) &
+            CALL dbcsr_deallocate_matrix(rtp%canon_ortho%ymatrix_dbcsr)
          DEALLOCATE (rtp%canon_ortho)
       END IF
       CALL dbcsr_deallocate_matrix(rtp%S_inv)

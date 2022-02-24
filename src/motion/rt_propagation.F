@@ -34,6 +34,7 @@ MODULE rt_propagation
                                               cp_rm_iter_level
    USE cp_para_types,                   ONLY: cp_para_env_type
    USE dbcsr_api,                       ONLY: dbcsr_copy,&
+                                              dbcsr_distribution_type,&
                                               dbcsr_p_type
    USE efield_utils,                    ONLY: calculate_ecore_efield
    USE force_env_methods,               ONLY: force_env_calc_energy_force
@@ -82,7 +83,8 @@ MODULE rt_propagation
                                               calc_update_rho,&
                                               calc_update_rho_sparse,&
                                               get_restart_wfn,&
-                                              rt_canon_ortho
+                                              rt_canon_ortho,&
+                                              transform_to_canon_ortho_coeffs
    USE rt_propagation_velocity_gauge,   ONLY: velocity_gauge_ks_matrix
    USE rt_propagator_init,              ONLY: init_propagators,&
                                               rt_initialize_rho_from_mos
@@ -201,14 +203,15 @@ CONTAINS
       INTEGER, DIMENSION(2)                              :: nelectron_spin
       LOGICAL                                            :: periodic_cell
       TYPE(cell_type), POINTER                           :: cell
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_new, mos_old
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_new, mos_old, mos_ortho_new, &
+                                                            mos_ortho_old
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_ks, matrix_s, rho_new, rho_old
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(rtp_control_type), POINTER                    :: rtp_control
 
-      NULLIFY (matrix_s, dft_control, cell, rtp, rtp_control)
+      NULLIFY (matrix_s, dft_control, rtp, rtp_control, mos, mos_old, mos_new, mos_ortho_old, mos_ortho_new)
 
       CALL cite_reference(Andermatt2016)
 
@@ -227,6 +230,7 @@ CONTAINS
       IF (.NOT. rtp%linear_scaling) THEN
          CALL get_qs_env(qs_env, mos=mos)
          CALL get_rtp(rtp=rtp, mos_old=mos_old, mos_new=mos_new)
+         IF (rtp_control%canonical_ortho) CALL get_rtp(rtp=rtp, mos_ortho_old=mos_ortho_old, mos_ortho_new=mos_ortho_new)
          IF (rtp_control%initial_wfn == use_scf_wfn) THEN
             IF (rtp_control%apply_delta_pulse) THEN
                IF (dft_control%qs_control%dftb) &
@@ -250,10 +254,13 @@ CONTAINS
                   CALL cp_fm_set_all(mos_old(2*i)%matrix, zero, zero)
                END DO
             END IF
+            IF (rtp_control%canonical_ortho) THEN
+               CALL transform_to_canon_ortho_coeffs(qs_env, mos_old, mos_ortho_old)
+            END IF
          END IF
-
          DO i = 1, SIZE(mos_old)
             CALL cp_fm_to_fm(mos_old(i)%matrix, mos_new(i)%matrix)
+            IF (rtp_control%canonical_ortho) CALL cp_fm_to_fm(mos_ortho_old(i)%matrix, mos_ortho_new(i)%matrix)
          END DO
          CALL calc_update_rho(qs_env)
       ELSE
@@ -447,12 +454,13 @@ CONTAINS
       TYPE(cp_fm_struct_type), POINTER                   :: aux_fit_fm_struct
       TYPE(cp_fm_type), POINTER                          :: mo_coeff, mo_coeff_aux_fit
       TYPE(cp_para_env_type), POINTER                    :: para_env
+      TYPE(dbcsr_distribution_type), POINTER             :: dbcsr_dist
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
 
-      NULLIFY (matrix_s, dft_control, blacs_env, para_env, qs_kind_set, aux_fit_fm_struct)
-      CALL get_qs_env(qs_env, dft_control=dft_control)
+      NULLIFY (matrix_s, dft_control, dbcsr_dist)
+      CALL get_qs_env(qs_env, dft_control=dft_control, dbcsr_dist=dbcsr_dist)
 
       SELECT CASE (rtp_control%initial_wfn)
       CASE (use_scf_wfn)
@@ -468,7 +476,7 @@ CONTAINS
          CALL get_qs_env(qs_env, matrix_s=matrix_s)
          IF (dft_control%rtp_control%canonical_ortho) CALL rt_canon_ortho(qs_env, calc_trsfmatrices=.FALSE.)
          CALL rt_prop_create(qs_env%rtp, qs_env%mos, qs_env%mpools, dft_control, matrix_s(1)%matrix, &
-                             rtp_control%linear_scaling, qs_env%admm_env%mos_aux_fit)
+                             rtp_control%linear_scaling, qs_env%mos_aux_fit, dbcsr_dist=dbcsr_dist)
 
       CASE (use_restart_wfn, use_rt_restart)
          CALL qs_energies_init(qs_env, .FALSE.)
@@ -505,7 +513,7 @@ CONTAINS
          CALL get_qs_env(qs_env, matrix_s=matrix_s)
          IF (dft_control%rtp_control%canonical_ortho) CALL rt_canon_ortho(qs_env, calc_trsfmatrices=.FALSE.)
          CALL rt_prop_create(qs_env%rtp, qs_env%mos, qs_env%mpools, dft_control, matrix_s(1)%matrix, &
-                             rtp_control%linear_scaling, qs_env%admm_env%mos_aux_fit)
+                             rtp_control%linear_scaling, qs_env%mos_aux_fit, dbcsr_dist=dbcsr_dist)
          CALL get_restart_wfn(qs_env)
 
          qs_env%run_rtp = .TRUE.

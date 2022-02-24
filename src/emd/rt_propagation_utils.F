@@ -22,6 +22,7 @@ MODULE rt_propagation_utils
    USE cp_control_types,                ONLY: dft_control_type,&
                                               rtp_control_type
    USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
+                                              copy_fm_to_dbcsr,&
                                               cp_dbcsr_plus_fm_fm_t,&
                                               dbcsr_deallocate_matrix_set
    USE cp_fm_basic_linalg,              ONLY: cp_fm_column_scale,&
@@ -93,6 +94,8 @@ MODULE rt_propagation_utils
              rt_canon_ortho, &
              transform_to_canon_ortho_coeffs, &
              orthonormalize_complex_mos
+   !  canon_ortho_matrix_ao_to_co, &
+   !  canon_ortho_matrix_co_to_ao
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'rt_propagation_utils'
 
@@ -601,6 +604,10 @@ CONTAINS
          CALL cp_fm_to_fm(mat_tmp, rtp%canon_ortho%xmatrix, nao - ndep, 1, 1)
          CALL cp_fm_to_fm(mat_tmp2, rtp%canon_ortho%ymatrix, nao - ndep, 1, 1)
 
+         ! copy to dbcsr counter parts
+         CALL copy_fm_to_dbcsr(rtp%canon_ortho%xmatrix, rtp%canon_ortho%xmatrix_dbcsr)
+         CALL copy_fm_to_dbcsr(rtp%canon_ortho%ymatrix, rtp%canon_ortho%ymatrix_dbcsr)
+
          logger => cp_get_default_logger()
          scf_section => section_vals_get_subs_vals(input, "DFT%REAL_TIME_PROPAGATION")
          output_unit = cp_print_key_unit_nr(logger, scf_section, "PRINT%PROGRAM_RUN_INFO", &
@@ -781,5 +788,49 @@ CONTAINS
       CALL cp_fm_release(S_fm)
 
    END SUBROUTINE orthonormalize_complex_mos
+
+! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param matrix_ao ...
+!> \param matrix_co ...
+!> \param density ...
+! ! **************************************************************************************************
+!    SUBROUTINE canon_ortho_matrix_ao_to_co(qs_env, matrix_ao, matrix_co, density)
+!       TYPE(qs_environment_type), POINTER                 :: qs_env
+!       TYPE(dbcsr_p_type), DIMENSION(:), INTENT(IN), &
+!          POINTER                                         :: matrix_ao
+!       TYPE(dbcsr_p_type), DIMENSION(:), INTENT(OUT), &
+!          POINTER                                         :: matrix_co
+!       LOGICAL, INTENT(IN)                                :: density
+!       INTEGER                                            :: nspins
+!       TYPE(cp_fm_type), POINTER                          :: xmatrix, ymatrix
+!       TYPE(dft_control_type), POINTER                    :: dft_control
+!       TYPE(rt_prop_type), POINTER                        :: rtp
+!       TYPE(rtp_control_type), POINTER                    :: rtp_control
+!       NULLIFY (dft_control, rtp_control, rtp, xmatrix, ymatrix)
+!       CALL get_qs_env(qs_env, &
+!                       dft_control=dft_control, &
+!                       rtp=rtp)
+!       nspins = dft_control%nspins
+!       rtp_control => dft_control%rtp_control
+!       CALL get_rtp(rtp, xmatrix=xmatrix, ymatrix=ymatrix)
+!       CPASSERT(ASSOCIATED(xmatrix) .AND. ASSOCIATED(ymatrix))
+!    END SUBROUTINE canon_ortho_matrix_ao_to_co
+! ! **************************************************************************************************
+! !> \brief ...
+! !> \param qs_env ...
+! !> \param matrix_co ...
+! !> \param matrix_ao ...
+! !> \param density ...
+! ! **************************************************************************************************
+!    SUBROUTINE canon_ortho_matrix_co_to_ao(qs_env, matrix_co, matrix_ao, density)
+!       TYPE(qs_environment_type), POINTER                 :: qs_env
+!       TYPE(dbcsr_p_type), DIMENSION(:), INTENT(IN), &
+!          POINTER                                         :: matrix_co
+!       TYPE(dbcsr_p_type), DIMENSION(:), INTENT(OUT), &
+!          POINTER                                         :: matrix_ao
+!       LOGICAL, INTENT(IN)                                :: density
+!    END SUBROUTINE canon_ortho_matrix_co_to_ao
 
 END MODULE rt_propagation_utils
