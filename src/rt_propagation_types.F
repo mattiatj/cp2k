@@ -43,7 +43,8 @@ MODULE rt_propagation_types
                                               dbcsr_init_p,&
                                               dbcsr_p_type,&
                                               dbcsr_type,&
-                                              dbcsr_type_no_symmetry
+                                              dbcsr_type_no_symmetry,&
+                                              dbcsr_type_symmetric
    USE kinds,                           ONLY: dp
    USE qs_matrix_pools,                 ONLY: mpools_get,&
                                               qs_matrix_pools_type
@@ -298,8 +299,9 @@ CONTAINS
                CALL dbcsr_init_p(rtp%canon_ortho%H_canon(i)%matrix)
                CALL dbcsr_create(rtp%canon_ortho%H_canon(i)%matrix, template=template, &
                                  name="H_canon "//TRIM(ADJUSTL(cp_to_string(i))), matrix_type=dbcsr_type_no_symmetry)
+               CALL dbcsr_init_p(rtp%canon_ortho%P_canon(i)%matrix)
                CALL dbcsr_create(rtp%canon_ortho%P_canon(i)%matrix, template=template, &
-                                 name="P_canon "//TRIM(ADJUSTL(cp_to_string(i))), matrix_type=dbcsr_type_no_symmetry)
+                                 name="P_canon "//TRIM(ADJUSTL(cp_to_string(i))), matrix_type=dbcsr_type_symmetric)
             END DO
 
          END IF
@@ -405,11 +407,12 @@ CONTAINS
 !> \param SinvH ...
 !> \param SinvB ...
 !> \param admm_mos ...
+!> \param P_canon ...
 ! **************************************************************************************************
    SUBROUTINE get_rtp(rtp, exp_H_old, exp_H_new, H_last_iter, rho_old, rho_next, rho_new, mos, mos_new, mos_old, &
                       mos_next, mos_ortho, mos_ortho_new, mos_ortho_old, mos_ortho_next, xmatrix, ymatrix, &
                       xmatrix_dbcsr, ymatrix_dbcsr, S_inv, S_half, S_minus_half, B_mat, C_mat, propagator_matrix, &
-                      mixing, mixing_factor, S_der, dt, nsteps, SinvH, SinvB, admm_mos)
+                      mixing, mixing_factor, S_der, dt, nsteps, SinvH, SinvB, admm_mos, P_canon)
 
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
@@ -437,6 +440,8 @@ CONTAINS
          POINTER                                         :: SinvH, SinvB
       TYPE(cp_fm_p_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: admm_mos
+      TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
+         POINTER                                         :: P_canon
 
       CPASSERT(ASSOCIATED(rtp))
       IF (PRESENT(exp_H_old)) exp_H_old => rtp%exp_H_old
@@ -461,6 +466,7 @@ CONTAINS
       IF (PRESENT(ymatrix)) ymatrix => rtp%canon_ortho%ymatrix
       IF (PRESENT(xmatrix_dbcsr)) xmatrix_dbcsr => rtp%canon_ortho%xmatrix_dbcsr
       IF (PRESENT(ymatrix_dbcsr)) ymatrix_dbcsr => rtp%canon_ortho%ymatrix_dbcsr
+      IF (PRESENT(P_canon)) P_canon => rtp%canon_ortho%P_canon
 
       IF (PRESENT(S_inv)) S_inv => rtp%S_inv
       IF (PRESENT(S_half)) S_half => rtp%S_half

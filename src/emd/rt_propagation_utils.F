@@ -50,7 +50,7 @@ MODULE rt_propagation_utils
         dbcsr_create, dbcsr_deallocate_matrix, dbcsr_desymmetrize, dbcsr_distribution_type, &
         dbcsr_filter, dbcsr_get_info, dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, &
         dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_multiply, &
-        dbcsr_p_type, dbcsr_scale, dbcsr_set, dbcsr_type, dbcsr_type_no_symmetry
+        dbcsr_p_type, dbcsr_print, dbcsr_scale, dbcsr_set, dbcsr_type, dbcsr_type_no_symmetry
    USE input_constants,                 ONLY: use_restart_wfn,&
                                               use_rt_restart
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
@@ -365,21 +365,24 @@ CONTAINS
 !> \brief calculates the density from the complex MOs and passes the density to
 !>        qs_env.
 !> \param qs_env ...
+!> \param ortho ...
 !> \author Florian Schiffmann (02.09)
 ! **************************************************************************************************
 
-   SUBROUTINE calc_update_rho(qs_env)
+   SUBROUTINE calc_update_rho(qs_env, ortho)
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
+      LOGICAL, INTENT(IN), OPTIONAL                      :: ortho
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'calc_update_rho'
-      REAL(KIND=dp), PARAMETER                           :: one = 1.0_dp, zero = 0.0_dp
 
-      INTEGER                                            :: handle, i, im, ncol, re
+      INTEGER                                            :: handle, i, im, ncol, nrow, nspins, re
+      LOGICAL                                            :: my_ortho
       REAL(KIND=dp)                                      :: alpha
       TYPE(cp_fm_p_type)                                 :: mos_occ
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_new
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: rho_ao, rho_ao_im
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_new, mos_ortho_new
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: rho_ao, rho_ao_im, rho_co
+      TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
       TYPE(qs_ks_env_type), POINTER                      :: ks_env
       TYPE(qs_rho_type), POINTER                         :: rho
@@ -387,12 +390,17 @@ CONTAINS
 
       CALL timeset(routineN, handle)
 
-      NULLIFY (rho, ks_env, mos_new, rtp)
+      my_ortho = .FALSE.
+      IF (PRESENT(ortho)) my_ortho = ortho
+
+      NULLIFY (rho, ks_env, mos_new, rtp, dft_control)
       CALL get_qs_env(qs_env, &
                       ks_env=ks_env, &
                       rho=rho, &
                       rtp=rtp, &
-                      mos=mos)
+                      mos=mos, &
+                      dft_control=dft_control)
+
       CALL get_rtp(rtp=rtp, mos_new=mos_new)
       CALL qs_rho_get(rho_struct=rho, rho_ao=rho_ao)
       DO i = 1, SIZE(mos_new)/2
@@ -420,6 +428,43 @@ CONTAINS
          CALL cp_fm_release(mos_occ%matrix)
          DEALLOCATE (mos_occ%matrix)
       END DO
+
+      ! calculate density matrix in orthogonal basis
+      IF (my_ortho) THEN
+         WRITE (*, *) 'rho_ao'
+         CALL dbcsr_print(rho_ao(1)%matrix, matlab_format=.TRUE.)
+         nspins = dft_control%nspins
+         NULLIFY (mos_ortho_new, rho_co)
+         CALL get_rtp(rtp=rtp, mos_ortho_new=mos_ortho_new, P_canon=rho_co)
+         DO i = 1, nspins
+            re = 2*i - 1
+            im = 2*i
+            alpha = 3*one - REAL(nspins/2, dp)
+            CALL dbcsr_set(rho_co(i)%matrix, zero)
+            CALL cp_fm_get_info(mos_ortho_new(re)%matrix, ncol_global=ncol, nrow_global=nrow)
+            WRITE (*, *) 'nrow', nrow
+            CALL cp_fm_create(mos_occ%matrix, &
+                              matrix_struct=mos_ortho_new(re)%matrix%matrix_struct, &
+                              name="mos_occ_ortho")
+            CALL cp_fm_to_fm(mos_ortho_new(re)%matrix, mos_occ%matrix)
+            CALL cp_fm_column_scale(mos_occ%matrix, mos(i)%mo_set%occupation_numbers/alpha)
+            CALL cp_dbcsr_plus_fm_fm_t(sparse_matrix=rho_co(i)%matrix, &
+                                       matrix_v=mos_occ%matrix, &
+                                       ncol=ncol, &
+                                       alpha=alpha)
+            ! It is actually complex conjugate but i*i=-1 therefore it must be added
+            CALL cp_fm_to_fm(mos_ortho_new(im)%matrix, mos_occ%matrix)
+            CALL cp_fm_column_scale(mos_occ%matrix, mos(i)%mo_set%occupation_numbers/alpha)
+            CALL cp_dbcsr_plus_fm_fm_t(sparse_matrix=rho_co(i)%matrix, &
+                                       matrix_v=mos_occ%matrix, &
+                                       ncol=ncol, &
+                                       alpha=alpha)
+            CALL cp_fm_release(mos_occ%matrix)
+         END DO
+         WRITE (*, *) 'rho_co'
+         CALL dbcsr_print(rho_co(1)%matrix, matlab_format=.TRUE.)
+      END IF
+
       CALL qs_rho_update_rho(rho, qs_env)
 
       IF (rtp%do_hfx .OR. rtp%track_imag_density) THEN
@@ -656,6 +701,9 @@ CONTAINS
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(rt_prop_type), POINTER                        :: rtp
 
+!, i
+! REAL(KIND=dp), pointer, DIMENSION(:,:)           :: local_data
+
       NULLIFY (dft_control, matrix_s, rtp)
       CALL get_qs_env(qs_env, &
                       dft_control=dft_control, &
@@ -668,6 +716,12 @@ CONTAINS
       CALL get_rtp(rtp, ymatrix=ymatrix)
       CPASSERT(ASSOCIATED(ymatrix))
 
+      ! write(*,*) 'coeffs'
+      ! call cp_fm_get_info(coeffs(1)%matrix, local_data = local_data)
+      ! do i = 1, size(local_data, 1)
+      !    write(*,*) local_data(i,:)
+      ! enddo
+
       DO ispin = 1, dft_control%nspins ! spins
          CALL cp_fm_get_info(coeffs(2*ispin)%matrix, ncol_global=nmo)
          DO j = 1, 2               ! real and imaginary part
@@ -676,8 +730,13 @@ CONTAINS
          END DO
       END DO
 
+      ! write(*,*) 'coeffs_ortho'
+      ! call cp_fm_get_info(coeffs_ortho(1)%matrix, local_data = local_data)
+      ! do i = 1, size(local_data, 1)
+      !    write(*,*) local_data(i,:)
+      ! enddo
       ! normalize as ymatrix does NOT correspond to a unitary transformation
-      CALL orthonormalize_complex_mos(qs_env, coeffs_ortho, .TRUE.)
+      ! CALL orthonormalize_complex_mos(qs_env, coeffs_ortho, .TRUE.)
 
    END SUBROUTINE transform_to_canon_ortho_coeffs
 

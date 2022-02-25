@@ -81,13 +81,11 @@ MODULE rt_propagation
    USE rt_propagation_utils,            ONLY: calc_S_derivs,&
                                               calc_update_rho,&
                                               calc_update_rho_sparse,&
+                                              canon_ortho_matrix_ao_to_co,&
+                                              canon_ortho_matrix_co_to_ao,&
                                               get_restart_wfn,&
                                               rt_canon_ortho,&
                                               transform_to_canon_ortho_coeffs
-   USE rt_propagation_utils,            ONLY: &
-        calc_S_derivs, calc_update_rho, calc_update_rho_sparse, canon_ortho_matrix_ao_to_co, &
-        canon_ortho_matrix_co_to_ao, get_restart_wfn, rt_canon_ortho, transform_to_ao_coeffs, &
-        transform_to_canon_ortho_coeffs
    USE rt_propagation_velocity_gauge,   ONLY: velocity_gauge_ks_matrix
    USE rt_propagator_init,              ONLY: init_propagators,&
                                               rt_initialize_rho_from_mos
@@ -263,14 +261,14 @@ CONTAINS
             END IF
             IF (rtp_control%canonical_ortho) THEN
                CALL transform_to_canon_ortho_coeffs(qs_env, mos_old, mos_ortho_old)
-               CALL transform_to_ao_coeffs(qs_env, mos_ortho_old, mos_old)
+               ! CALL transform_to_ao_coeffs(qs_env, mos_ortho_old, mos_old)
             END IF
          END IF
          DO i = 1, SIZE(mos_old)
             CALL cp_fm_to_fm(mos_old(i)%matrix, mos_new(i)%matrix)
             IF (rtp_control%canonical_ortho) CALL cp_fm_to_fm(mos_ortho_old(i)%matrix, mos_ortho_new(i)%matrix)
          END DO
-         CALL calc_update_rho(qs_env)
+         CALL calc_update_rho(qs_env, ortho=.TRUE.)
       ELSE
          IF (qs_env%rtp%linear_scaling .AND. rtp_control%initial_wfn == use_scf_wfn) THEN
             CALL get_qs_env(qs_env, &

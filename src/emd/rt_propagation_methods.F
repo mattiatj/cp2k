@@ -72,8 +72,7 @@ MODULE rt_propagation_methods
                                               rt_prop_type
    USE rt_propagation_utils,            ONLY: calc_S_derivs,&
                                               calc_update_rho,&
-                                              calc_update_rho_sparse,&
-                                              transform_to_canon_ortho_coeffs
+                                              calc_update_rho_sparse
    USE rt_propagation_velocity_gauge,   ONLY: velocity_gauge_ks_matrix
 #include "../base/base_uses.f90"
 
@@ -254,10 +253,10 @@ CONTAINS
          CALL cp_fm_vect_dealloc(delta_mos)
       END IF
 
-      IF (rtp_control%canonical_ortho) THEN
-         CALL transform_to_canon_ortho_coeffs(qs_env, rtp%mos%old, rtp%mos_ortho%old)
-         CALL transform_to_canon_ortho_coeffs(qs_env, rtp%mos%new, rtp%mos_ortho%new)
-      END IF
+      ! IF (rtp_control%canonical_ortho) THEN
+      !    CALL transform_to_canon_ortho_coeffs(qs_env, rtp%mos%old, rtp%mos_ortho%old)
+      !    CALL transform_to_canon_ortho_coeffs(qs_env, rtp%mos%new, rtp%mos_ortho%new)
+      ! END IF
 
       CALL timestop(handle)
 
