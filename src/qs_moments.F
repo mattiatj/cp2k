@@ -106,6 +106,7 @@ MODULE qs_moments
    PUBLIC :: build_berry_kpoint_matrix, build_local_magmom_matrix
    PUBLIC :: qs_moment_berry_phase, qs_moment_locop
    PUBLIC :: dipole_deriv_ao
+   PUBLIC :: print_moments, set_label
 
 CONTAINS
 

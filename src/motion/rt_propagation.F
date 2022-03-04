@@ -82,7 +82,6 @@ MODULE rt_propagation
                                               calc_update_rho,&
                                               calc_update_rho_sparse,&
                                               canon_ortho_matrix_ao_to_co,&
-                                              canon_ortho_matrix_co_to_ao,&
                                               get_restart_wfn,&
                                               rt_canon_ortho,&
                                               transform_to_canon_ortho_coeffs
@@ -228,8 +227,8 @@ CONTAINS
       IF (rtp_control%canonical_ortho) THEN
          CALL rt_canon_ortho(qs_env, .TRUE.)
          ! CALL dbcsr_print(matrix_ks(1)%matrix, matlab_format=.TRUE.)
-         CALL canon_ortho_matrix_ao_to_co(qs_env, matrix_ks, rtp%canon_ortho%H_canon, .FALSE.)
-         CALL canon_ortho_matrix_co_to_ao(qs_env, rtp%canon_ortho%H_canon, rtp%canon_ortho%P_canon, .FALSE.)
+         CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, matrix_ks, rtp%canon_ortho%H_canon, .FALSE.)
+         ! CALL canon_ortho_matrix_co_to_ao(qs_env, rtp%canon_ortho%H_canon, rtp%canon_ortho%P_canon, .FALSE.)
       END IF
 
       IF (.NOT. rtp%linear_scaling) THEN
@@ -268,7 +267,7 @@ CONTAINS
             CALL cp_fm_to_fm(mos_old(i)%matrix, mos_new(i)%matrix)
             IF (rtp_control%canonical_ortho) CALL cp_fm_to_fm(mos_ortho_old(i)%matrix, mos_ortho_new(i)%matrix)
          END DO
-         CALL calc_update_rho(qs_env, ortho=.TRUE.)
+         CALL calc_update_rho(qs_env)
       ELSE
          IF (qs_env%rtp%linear_scaling .AND. rtp_control%initial_wfn == use_scf_wfn) THEN
             CALL get_qs_env(qs_env, &
@@ -380,6 +379,7 @@ CONTAINS
          CALL external_e_potential(qs_env)
          CALL cp_iterate(logger%iter_info, last=(i_step == max_steps), iter_nr=i_step)
          rtp%converged = .FALSE.
+         rtp%converged_ortho = .FALSE.
          DO i_iter = 1, max_iter
             IF (i_step == rtp%i_start + 1 .AND. i_iter == 2 .AND. rtp_control%hfx_redistribute) &
                CALL qs_ks_did_change(qs_env%ks_env, s_mstruct_changed=.TRUE.)
@@ -388,7 +388,11 @@ CONTAINS
             CALL qs_ks_update_qs_env(qs_env, calculate_forces=.FALSE.)
             rtp%energy_new = energy%total
             IF (rtp%converged) EXIT
-            CALL rt_prop_output(qs_env, real_time_propagation, rtp%delta_iter)
+            IF (.NOT. rtp_control%canonical_ortho) THEN
+               CALL rt_prop_output(qs_env, real_time_propagation, rtp%delta_iter)
+            ELSE
+               CALL rt_prop_output(qs_env, real_time_propagation, rtp%delta_iter, delta_iter_ortho=rtp%delta_iter_ortho)
+            END IF
          END DO
          IF (rtp%converged) THEN
             CALL external_control(should_stop, "MD", globenv=globenv)
@@ -396,7 +400,12 @@ CONTAINS
             time_iter_stop = m_walltime()
             used_time = time_iter_stop - time_iter_start
             time_iter_start = time_iter_stop
-            CALL rt_prop_output(qs_env, real_time_propagation, delta_iter=rtp%delta_iter, used_time=used_time)
+            IF (.NOT. rtp_control%canonical_ortho) THEN
+               CALL rt_prop_output(qs_env, real_time_propagation, delta_iter=rtp%delta_iter, used_time=used_time)
+            ELSE
+               CALL rt_prop_output(qs_env, real_time_propagation, delta_iter=rtp%delta_iter, used_time=used_time, &
+                                   delta_iter_ortho=rtp%delta_iter_ortho)
+            END IF
             CALL rt_write_input_restart(force_env=force_env)
             IF (should_stop) EXIT
          ELSE

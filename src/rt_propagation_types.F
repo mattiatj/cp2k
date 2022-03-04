@@ -84,6 +84,11 @@ MODULE rt_propagation_types
       TYPE(dbcsr_type), POINTER                   :: ymatrix_dbcsr
       TYPE(dbcsr_p_type), POINTER, DIMENSION(:)   :: H_canon
       TYPE(dbcsr_p_type), POINTER, DIMENSION(:)   :: P_canon
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)  :: exp_H_canon_old
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)  :: exp_H_canon_new
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)  :: H_last_iter_canon
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)  :: propagator_matrix_canon
+      TYPE(cp_fm_struct_type), POINTER            :: oo_oo_fmstruct
    END TYPE rtp_canon_ortho
 
    TYPE rt_prop_type
@@ -104,9 +109,11 @@ MODULE rt_propagation_types
       TYPE(rtp_mos_type), POINTER                  :: mos_ortho
       TYPE(rtp_canon_ortho), POINTER              :: canon_ortho
       REAL(KIND=dp)                               :: energy_old
+      REAL(KIND=dp)                               :: energy_new_ortho
       REAL(KIND=dp)                               :: energy_new
       REAL(KIND=dp)                               :: dt
       REAL(KIND=dp)                               :: delta_iter
+      REAL(KIND=dp)                               :: delta_iter_ortho
       REAL(KIND=dp)                               :: delta_iter_old
       REAL(KIND=dp)                               :: filter_eps
       REAL(KIND=dp)                               :: filter_eps_small
@@ -118,7 +125,10 @@ MODULE rt_propagation_types
       INTEGER                                     :: nsteps, istep, i_start, max_steps
       INTEGER                                     :: iter
       INTEGER                                     :: narn_old
+      INTEGER                                     :: iter_conv
+      INTEGER                                     :: iter_conv_ortho
       LOGICAL                                     :: converged
+      LOGICAL                                     :: converged_ortho
       LOGICAL                                     :: matrix_update
       LOGICAL                                     :: write_restart
       TYPE(rtp_history_type), POINTER              :: history, history_ortho
@@ -283,7 +293,14 @@ CONTAINS
 
             CALL cp_fm_struct_release(tmp_fmstruct)
 
-            ! create dbcsr matrices
+            ! template for fm matrices in the CO basis
+            NULLIFY (rtp%canon_ortho%oo_oo_fmstruct)
+            CALL cp_fm_struct_create(fmstruct=rtp%canon_ortho%oo_oo_fmstruct, &
+                                     nrow_block=nrow_block, ncol_block=nrow_block, &
+                                     nrow_global=nao - ndep, ncol_global=nao - ndep, &
+                                     template_fmstruct=ao_mo_fmstruct)
+
+            ! create transformation matrices in dbcsr format, keep S as template
             NULLIFY (rtp%canon_ortho%xmatrix_dbcsr, rtp%canon_ortho%ymatrix_dbcsr)
             ALLOCATE (rtp%canon_ortho%xmatrix_dbcsr, rtp%canon_ortho%ymatrix_dbcsr)
 
@@ -304,6 +321,28 @@ CONTAINS
                                  name="P_canon "//TRIM(ADJUSTL(cp_to_string(i))), matrix_type=dbcsr_type_symmetric)
             END DO
 
+            NULLIFY (rtp%canon_ortho%exp_H_canon_old)
+            NULLIFY (rtp%canon_ortho%exp_H_canon_new)
+            NULLIFY (rtp%canon_ortho%H_last_iter_canon)
+            NULLIFY (rtp%canon_ortho%propagator_matrix_canon)
+            CALL dbcsr_allocate_matrix_set(rtp%canon_ortho%exp_H_canon_old, 2*nspin)
+            CALL dbcsr_allocate_matrix_set(rtp%canon_ortho%exp_H_canon_new, 2*nspin)
+            CALL dbcsr_allocate_matrix_set(rtp%canon_ortho%H_last_iter_canon, 2*nspin)
+            CALL dbcsr_allocate_matrix_set(rtp%canon_ortho%propagator_matrix_canon, 2*nspin)
+            DO i = 1, 2*nspin
+               CALL dbcsr_init_p(rtp%canon_ortho%exp_H_canon_old(i)%matrix)
+               CALL dbcsr_create(rtp%canon_ortho%exp_H_canon_old(i)%matrix, template=template, matrix_type="N", &
+                                 name='exp_H_canon_old '//TRIM(ADJUSTL(cp_to_string(i))))
+               CALL dbcsr_init_p(rtp%canon_ortho%exp_H_canon_new(i)%matrix)
+               CALL dbcsr_create(rtp%canon_ortho%exp_H_canon_new(i)%matrix, template=template, matrix_type="N", &
+                                 name='exp_H_canon_new '//TRIM(ADJUSTL(cp_to_string(i))))
+               CALL dbcsr_init_p(rtp%canon_ortho%H_last_iter_canon(i)%matrix)
+               CALL dbcsr_create(rtp%canon_ortho%H_last_iter_canon(i)%matrix, template=template, matrix_type="N", &
+                                 name='H_last_iter_canon '//TRIM(ADJUSTL(cp_to_string(i))))
+               CALL dbcsr_init_p(rtp%canon_ortho%propagator_matrix_canon(i)%matrix)
+               CALL dbcsr_create(rtp%canon_ortho%propagator_matrix_canon(i)%matrix, template=template, matrix_type="N", &
+                                 name='propagator_matrix_canon '//TRIM(ADJUSTL(cp_to_string(i))))
+            END DO
          END IF
       END IF
 
@@ -378,6 +417,9 @@ CONTAINS
 !> \param exp_H_old ...
 !> \param exp_H_new ...
 !> \param H_last_iter ...
+!> \param exp_H_canon_old ...
+!> \param exp_H_canon_new ...
+!> \param H_last_iter_canon ...
 !> \param rho_old ...
 !> \param rho_next ...
 !> \param rho_new ...
@@ -399,6 +441,7 @@ CONTAINS
 !> \param B_mat ...
 !> \param C_mat ...
 !> \param propagator_matrix ...
+!> \param propagator_matrix_canon ...
 !> \param mixing ...
 !> \param mixing_factor ...
 !> \param S_der ...
@@ -409,15 +452,16 @@ CONTAINS
 !> \param admm_mos ...
 !> \param P_canon ...
 ! **************************************************************************************************
-   SUBROUTINE get_rtp(rtp, exp_H_old, exp_H_new, H_last_iter, rho_old, rho_next, rho_new, mos, mos_new, mos_old, &
+   SUBROUTINE get_rtp(rtp, exp_H_old, exp_H_new, H_last_iter, exp_H_canon_old, exp_H_canon_new, H_last_iter_canon, &
+                      rho_old, rho_next, rho_new, mos, mos_new, mos_old, &
                       mos_next, mos_ortho, mos_ortho_new, mos_ortho_old, mos_ortho_next, xmatrix, ymatrix, &
                       xmatrix_dbcsr, ymatrix_dbcsr, S_inv, S_half, S_minus_half, B_mat, C_mat, propagator_matrix, &
+                      propagator_matrix_canon, &
                       mixing, mixing_factor, S_der, dt, nsteps, SinvH, SinvB, admm_mos, P_canon)
 
       TYPE(rt_prop_type), POINTER                        :: rtp
-      TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
-         POINTER                                         :: exp_H_old, exp_H_new, H_last_iter, &
-                                                            rho_old, rho_next, rho_new
+      TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, POINTER :: exp_H_old, exp_H_new, H_last_iter, &
+         exp_H_canon_old, exp_H_canon_new, H_last_iter_canon, rho_old, rho_next, rho_new
       TYPE(rtp_mos_type), OPTIONAL, POINTER              :: mos
       TYPE(cp_fm_p_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: mos_new, mos_old, mos_next
@@ -429,7 +473,8 @@ CONTAINS
       TYPE(dbcsr_type), OPTIONAL, POINTER                :: xmatrix_dbcsr, ymatrix_dbcsr, S_inv, &
                                                             S_half, S_minus_half, B_mat
       TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
-         POINTER                                         :: C_mat, propagator_matrix
+         POINTER                                         :: C_mat, propagator_matrix, &
+                                                            propagator_matrix_canon
       LOGICAL, OPTIONAL                                  :: mixing
       REAL(dp), INTENT(out), OPTIONAL                    :: mixing_factor
       TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
@@ -448,6 +493,11 @@ CONTAINS
       IF (PRESENT(exp_H_new)) exp_H_new => rtp%exp_H_new
       IF (PRESENT(H_last_iter)) H_last_iter => rtp%H_last_iter
       IF (PRESENT(propagator_matrix)) propagator_matrix => rtp%propagator_matrix
+
+      IF (PRESENT(exp_H_canon_old)) exp_H_canon_old => rtp%canon_ortho%exp_H_canon_old
+      IF (PRESENT(exp_H_canon_new)) exp_H_canon_new => rtp%canon_ortho%exp_H_canon_new
+      IF (PRESENT(H_last_iter_canon)) H_last_iter_canon => rtp%canon_ortho%H_last_iter_canon
+      IF (PRESENT(propagator_matrix_canon)) propagator_matrix_canon => rtp%canon_ortho%propagator_matrix_canon
 
       IF (PRESENT(rho_old)) rho_old => rtp%rho%old
       IF (PRESENT(rho_next)) rho_next => rtp%rho%next
@@ -539,6 +589,16 @@ CONTAINS
             CALL dbcsr_deallocate_matrix_set(rtp%canon_ortho%H_canon)
          IF (ASSOCIATED(rtp%canon_ortho%P_canon)) &
             CALL dbcsr_deallocate_matrix_set(rtp%canon_ortho%P_canon)
+         IF (ASSOCIATED(rtp%canon_ortho%exp_H_canon_old)) &
+            CALL dbcsr_deallocate_matrix_set(rtp%canon_ortho%exp_H_canon_old)
+         IF (ASSOCIATED(rtp%canon_ortho%exp_H_canon_new)) &
+            CALL dbcsr_deallocate_matrix_set(rtp%canon_ortho%exp_H_canon_new)
+         IF (ASSOCIATED(rtp%canon_ortho%H_last_iter_canon)) &
+            CALL dbcsr_deallocate_matrix_set(rtp%canon_ortho%H_last_iter_canon)
+         IF (ASSOCIATED(rtp%canon_ortho%propagator_matrix_canon)) &
+            CALL dbcsr_deallocate_matrix_set(rtp%canon_ortho%propagator_matrix_canon)
+         IF (ASSOCIATED(rtp%canon_ortho%oo_oo_fmstruct)) &
+            CALL cp_fm_struct_release(rtp%canon_ortho%oo_oo_fmstruct)
          DEALLOCATE (rtp%canon_ortho)
       END IF
       CALL dbcsr_deallocate_matrix(rtp%S_inv)

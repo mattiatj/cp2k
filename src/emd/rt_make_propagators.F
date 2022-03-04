@@ -19,11 +19,15 @@ MODULE rt_make_propagators
    USE cp_fm_types,                     ONLY: cp_fm_create,&
                                               cp_fm_get_info,&
                                               cp_fm_p_type,&
-                                              cp_fm_to_fm
+                                              cp_fm_set_all,&
+                                              cp_fm_to_fm,&
+                                              cp_fm_to_fm_submat
    USE cp_fm_vect,                      ONLY: cp_fm_vect_dealloc
+   USE cp_gemm_interface,               ONLY: cp_gemm
    USE dbcsr_api,                       ONLY: dbcsr_copy,&
                                               dbcsr_create,&
                                               dbcsr_deallocate_matrix,&
+                                              dbcsr_get_info,&
                                               dbcsr_p_type,&
                                               dbcsr_scale,&
                                               dbcsr_type
@@ -65,60 +69,192 @@ CONTAINS
 !>        EM:    exp[-idt/2H(t+dt/2)*MOS
 !> \param rtp ...
 !> \param rtp_control ...
+!> \param ortho ...
 !> \author Florian Schiffmann (02.09)
 ! **************************************************************************************************
 
-   SUBROUTINE propagate_exp(rtp, rtp_control)
+   SUBROUTINE propagate_exp(rtp, rtp_control, ortho)
 
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(rtp_control_type), POINTER                    :: rtp_control
+      LOGICAL, INTENT(IN)                                :: ortho
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'propagate_exp'
       REAL(KIND=dp), PARAMETER                           :: one = 1.0_dp, zero = 0.0_dp
 
-      INTEGER                                            :: handle, i, im, nmo, re
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_new, mos_next, mos_old
+      INTEGER                                            :: handle, i, im, nao, ndep, nmo, re
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER :: exp_H_fm, exp_H_fm_red, mos_new, mos_next, &
+         mos_old, propagator_fm, propagator_fm_red, propagator_matrix_fm, propagator_matrix_fm_red
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: exp_H_new, exp_H_old, propagator_matrix
 
       CALL timeset(routineN, handle)
 
-      CALL get_rtp(rtp=rtp, propagator_matrix=propagator_matrix, mos_old=mos_old, mos_new=mos_new, &
-                   mos_next=mos_next, exp_H_new=exp_H_new, exp_H_old=exp_H_old)
+      NULLIFY (mos_new, mos_next, mos_old, exp_H_new, exp_H_old, propagator_matrix)
+
+      IF (.NOT. ortho) THEN
+         CALL get_rtp(rtp=rtp, propagator_matrix=propagator_matrix, mos_old=mos_old, mos_new=mos_new, &
+                      mos_next=mos_next, exp_H_new=exp_H_new, exp_H_old=exp_H_old)
+      ELSE
+         CALL get_rtp(rtp=rtp, propagator_matrix_canon=propagator_matrix, mos_ortho_old=mos_old, &
+                      mos_ortho_new=mos_new, mos_ortho_next=mos_next, exp_H_canon_new=exp_H_new, exp_H_canon_old=exp_H_old)
+      END IF
+
+      NULLIFY (propagator_fm)
+      ALLOCATE (propagator_fm(SIZE(exp_H_new)))
+      NULLIFY (propagator_matrix_fm)
+      ALLOCATE (propagator_matrix_fm(SIZE(propagator_matrix)))
+      DO i = 1, SIZE(exp_H_new)
+         CALL cp_fm_create(propagator_fm(i)%matrix, &
+                           matrix_struct=rtp%ao_ao_fmstruct, &
+                           name="prop_fm")
+         CALL copy_dbcsr_to_fm(exp_H_new(i)%matrix, propagator_fm(i)%matrix)
+         CALL cp_fm_create(propagator_matrix_fm(i)%matrix, &
+                           matrix_struct=rtp%ao_ao_fmstruct, &
+                           name="prop_mat_fm")
+         CALL copy_dbcsr_to_fm(propagator_matrix(i)%matrix, propagator_matrix_fm(i)%matrix)
+      END DO
+
+      ! need to reduce dimension of propagator_matrix_fm if linear dependencies in S were removed
+      NULLIFY (propagator_fm_red, propagator_matrix_fm_red)
+      IF (ortho) THEN
+         ALLOCATE (propagator_fm_red(SIZE(propagator_fm)))
+         ALLOCATE (propagator_matrix_fm_red(SIZE(propagator_matrix_fm)))
+         ndep = rtp_control%nlindep
+         CALL cp_fm_get_info(propagator_fm(1)%matrix, nrow_global=nao)
+         DO i = 1, SIZE(propagator_fm)
+            CALL cp_fm_create(propagator_fm_red(i)%matrix, &
+                              matrix_struct=rtp%canon_ortho%oo_oo_fmstruct, &
+                              name="prop fm red")
+            CALL cp_fm_to_fm_submat(propagator_fm(i)%matrix, propagator_fm_red(i)%matrix, &
+                                    nao - ndep, nao - ndep, 1, 1, 1, 1)
+            CALL cp_fm_create(propagator_matrix_fm_red(i)%matrix, &
+                              matrix_struct=rtp%canon_ortho%oo_oo_fmstruct, &
+                              name="prop fm red")
+            CALL cp_fm_to_fm_submat(propagator_matrix_fm(i)%matrix, propagator_matrix_fm_red(i)%matrix, &
+                                    nao - ndep, nao - ndep, 1, 1, 1, 1)
+         END DO
+      END IF
 
       ! Only compute exponential if a new propagator matrix is available
-      CALL compute_exponential(exp_H_new, propagator_matrix, rtp_control, rtp)
+      IF (.NOT. ortho) THEN
+         CALL compute_exponential(propagator_fm, propagator_matrix_fm, rtp_control, rtp)
+      ELSE
+         CALL compute_exponential(propagator_fm_red, propagator_matrix_fm_red, rtp_control, rtp)
+         ! copy back to full dimensinal ao matrices in order to be compatible with dbcsr format
+         ndep = rtp_control%nlindep
+         CALL cp_fm_get_info(propagator_fm(1)%matrix, nrow_global=nao)
+         DO i = 1, SIZE(propagator_fm)
+            CALL cp_fm_set_all(propagator_fm(i)%matrix, 0.0_dp)
+            CALL cp_fm_set_all(propagator_matrix_fm(i)%matrix, 0.0_dp)
+            CALL cp_fm_to_fm_submat(propagator_fm_red(i)%matrix, propagator_fm(i)%matrix, &
+                                    nao - ndep, nao - ndep, 1, 1, 1, 1)
+            CALL cp_fm_to_fm_submat(propagator_matrix_fm_red(i)%matrix, propagator_matrix_fm(i)%matrix, &
+                                    nao - ndep, nao - ndep, 1, 1, 1, 1)
+         END DO
+      END IF
 
-      DO i = 1, SIZE(mos_new)/2
-         re = 2*i - 1
-         im = 2*i
+      DO i = 1, SIZE(exp_H_new)
+         CALL copy_fm_to_dbcsr(propagator_fm(i)%matrix, exp_H_new(i)%matrix)
+         CALL copy_fm_to_dbcsr(propagator_matrix_fm(i)%matrix, propagator_matrix(i)%matrix)
+      END DO
 
-         CALL cp_fm_get_info(mos_new(re)%matrix, ncol_global=nmo)
-         !Save some work by computing the first half of the propagation only once in case of ETRS
-         !For EM this matrix has to be the initial matrix, thus a copy is enough
+      CALL cp_fm_vect_dealloc(propagator_fm)
+      CALL cp_fm_vect_dealloc(propagator_matrix_fm)
+
+      IF (.NOT. ortho) THEN
+         DO i = 1, SIZE(mos_new)/2
+            re = 2*i - 1
+            im = 2*i
+
+            CALL cp_fm_get_info(mos_new(re)%matrix, ncol_global=nmo)
+            !Save some work by computing the first half of the propagation only once in case of ETRS
+            !For EM this matrix has to be the initial matrix, thus a copy is enough
+            IF (rtp%iter == 1) THEN
+               IF (rtp_control%propagator == do_etrs) THEN
+                  CALL cp_dbcsr_sm_fm_multiply(exp_H_old(re)%matrix, mos_old(re)%matrix, &
+                                               mos_next(re)%matrix, nmo, alpha=one, beta=zero)
+                  CALL cp_dbcsr_sm_fm_multiply(exp_H_old(im)%matrix, mos_old(im)%matrix, &
+                                               mos_next(re)%matrix, nmo, alpha=-one, beta=one)
+                  CALL cp_dbcsr_sm_fm_multiply(exp_H_old(re)%matrix, mos_old(im)%matrix, &
+                                               mos_next(im)%matrix, nmo, alpha=one, beta=zero)
+                  CALL cp_dbcsr_sm_fm_multiply(exp_H_old(im)%matrix, mos_old(re)%matrix, &
+                                               mos_next(im)%matrix, nmo, alpha=one, beta=one)
+               ELSE
+                  CALL cp_fm_to_fm(mos_old(re)%matrix, mos_next(re)%matrix)
+                  CALL cp_fm_to_fm(mos_old(im)%matrix, mos_next(im)%matrix)
+               END IF
+            END IF
+            CALL cp_dbcsr_sm_fm_multiply(exp_H_new(re)%matrix, mos_next(re)%matrix, &
+                                         mos_new(re)%matrix, nmo, alpha=one, beta=zero)
+            CALL cp_dbcsr_sm_fm_multiply(exp_H_new(im)%matrix, mos_next(im)%matrix, &
+                                         mos_new(re)%matrix, nmo, alpha=-one, beta=one)
+            CALL cp_dbcsr_sm_fm_multiply(exp_H_new(re)%matrix, mos_next(im)%matrix, &
+                                         mos_new(im)%matrix, nmo, alpha=one, beta=zero)
+            CALL cp_dbcsr_sm_fm_multiply(exp_H_new(im)%matrix, mos_next(re)%matrix, &
+                                         mos_new(im)%matrix, nmo, alpha=one, beta=one)
+         END DO
+      ELSE
+         ! get dimensions
+         CALL dbcsr_get_info(exp_H_new(1)%matrix, nfullrows_total=nao)
+         ndep = rtp_control%nlindep
+
          IF (rtp%iter == 1) THEN
             IF (rtp_control%propagator == do_etrs) THEN
-               CALL cp_dbcsr_sm_fm_multiply(exp_H_old(re)%matrix, mos_old(re)%matrix, &
-                                            mos_next(re)%matrix, nmo, alpha=one, beta=zero)
-               CALL cp_dbcsr_sm_fm_multiply(exp_H_old(im)%matrix, mos_old(im)%matrix, &
-                                            mos_next(re)%matrix, nmo, alpha=-one, beta=one)
-               CALL cp_dbcsr_sm_fm_multiply(exp_H_old(re)%matrix, mos_old(im)%matrix, &
-                                            mos_next(im)%matrix, nmo, alpha=one, beta=zero)
-               CALL cp_dbcsr_sm_fm_multiply(exp_H_old(im)%matrix, mos_old(re)%matrix, &
-                                            mos_next(im)%matrix, nmo, alpha=one, beta=one)
+               NULLIFY (exp_H_fm)
+               ALLOCATE (exp_H_fm(SIZE(exp_H_old)))
+               DO i = 1, SIZE(exp_H_old)
+                  CALL cp_fm_create(exp_H_fm(i)%matrix, matrix_struct=rtp%ao_ao_fmstruct, name="exp_H_fm")
+                  CALL copy_dbcsr_to_fm(exp_H_old(i)%matrix, exp_H_fm(i)%matrix)
+               END DO
+               NULLIFY (exp_H_fm_red)
+               ALLOCATE (exp_H_fm_red(SIZE(exp_H_fm)))
+               DO i = 1, SIZE(exp_H_fm)
+                  CALL cp_fm_create(exp_H_fm_red(i)%matrix, matrix_struct=rtp%canon_ortho%oo_oo_fmstruct, name="exp_H_fm_red")
+                  CALL cp_fm_to_fm_submat(exp_H_fm(i)%matrix, exp_H_fm_red(i)%matrix, &
+                                          nao - ndep, nao - ndep, 1, 1, 1, 1)
+               END DO
+               CALL cp_fm_vect_dealloc(exp_H_fm)
+               DO i = 1, SIZE(mos_old)/2
+                  re = 2*i - 1
+                  im = 2*i
+                  CALL cp_fm_get_info(mos_old(re)%matrix, ncol_global=nmo)
+                  CALL cp_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, exp_H_fm_red(re)%matrix, mos_old(re)%matrix, &
+                               zero, mos_next(re)%matrix)
+                  CALL cp_gemm("N", "N", nao - ndep, nmo, nao - ndep, -one, exp_H_fm_red(im)%matrix, mos_old(im)%matrix, &
+                               one, mos_next(re)%matrix)
+                  CALL cp_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, exp_H_fm_red(im)%matrix, mos_old(re)%matrix, &
+                               zero, mos_next(im)%matrix)
+                  CALL cp_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, exp_H_fm_red(re)%matrix, mos_old(im)%matrix, &
+                               one, mos_next(im)%matrix)
+               END DO
+
+               CALL cp_fm_vect_dealloc(exp_H_fm_red)
             ELSE
-               CALL cp_fm_to_fm(mos_old(re)%matrix, mos_next(re)%matrix)
-               CALL cp_fm_to_fm(mos_old(im)%matrix, mos_next(im)%matrix)
+               DO i = 1, SIZE(mos_old)/2
+                  re = 2*i - 1
+                  im = 2*i
+                  CALL cp_fm_to_fm(mos_old(re)%matrix, mos_next(re)%matrix)
+                  CALL cp_fm_to_fm(mos_old(im)%matrix, mos_next(im)%matrix)
+               END DO
             END IF
          END IF
-         CALL cp_dbcsr_sm_fm_multiply(exp_H_new(re)%matrix, mos_next(re)%matrix, &
-                                      mos_new(re)%matrix, nmo, alpha=one, beta=zero)
-         CALL cp_dbcsr_sm_fm_multiply(exp_H_new(im)%matrix, mos_next(im)%matrix, &
-                                      mos_new(re)%matrix, nmo, alpha=-one, beta=one)
-         CALL cp_dbcsr_sm_fm_multiply(exp_H_new(re)%matrix, mos_next(im)%matrix, &
-                                      mos_new(im)%matrix, nmo, alpha=one, beta=zero)
-         CALL cp_dbcsr_sm_fm_multiply(exp_H_new(im)%matrix, mos_next(re)%matrix, &
-                                      mos_new(im)%matrix, nmo, alpha=one, beta=one)
-      END DO
+
+         DO i = 1, SIZE(mos_new)/2
+            re = 2*i - 1
+            im = 2*i
+            CALL cp_fm_get_info(mos_new(re)%matrix, ncol_global=nmo)
+            CALL cp_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, propagator_fm_red(re)%matrix, mos_next(re)%matrix, &
+                         zero, mos_new(re)%matrix)
+            CALL cp_gemm("N", "N", nao - ndep, nmo, nao - ndep, -one, propagator_fm_red(im)%matrix, mos_next(im)%matrix, &
+                         one, mos_new(re)%matrix)
+            CALL cp_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, propagator_fm_red(im)%matrix, mos_next(re)%matrix, &
+                         zero, mos_new(im)%matrix)
+            CALL cp_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, propagator_fm_red(re)%matrix, mos_next(im)%matrix, &
+                         one, mos_new(im)%matrix)
+         END DO
+         CALL cp_fm_vect_dealloc(propagator_fm_red)
+         CALL cp_fm_vect_dealloc(propagator_matrix_fm_red)
+      END IF
 
       CALL timestop(handle)
 
@@ -193,25 +329,35 @@ CONTAINS
 !> \brief computes U_prop*MOs using arnoldi subspace algorithm
 !> \param rtp ...
 !> \param rtp_control ...
+!> \param ortho ...
 !> \author Florian Schiffmann (02.09)
 ! **************************************************************************************************
 
-   SUBROUTINE propagate_arnoldi(rtp, rtp_control)
+   SUBROUTINE propagate_arnoldi(rtp, rtp_control, ortho)
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(rtp_control_type), POINTER                    :: rtp_control
+      LOGICAL, INTENT(IN)                                :: ortho
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'propagate_arnoldi'
 
-      INTEGER                                            :: handle, i, im, ispin, nspin, re
+      INTEGER                                            :: handle, i, im, ispin, nao, ndep, nspin, &
+                                                            re
       REAL(dp)                                           :: eps_arnoldi, t
       TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_new, mos_next, mos_old, &
-                                                            propagator_matrix_fm
+                                                            propagator_matrix_fm, &
+                                                            propagator_matrix_fm_red
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: propagator_matrix
 
       CALL timeset(routineN, handle)
 
-      CALL get_rtp(rtp=rtp, dt=t, mos_new=mos_new, mos_old=mos_old, &
-                   mos_next=mos_next, propagator_matrix=propagator_matrix)
+      NULLIFY (mos_new, mos_old, mos_next, propagator_matrix)
+      IF (.NOT. ortho) THEN
+         CALL get_rtp(rtp=rtp, dt=t, mos_new=mos_new, mos_old=mos_old, &
+                      mos_next=mos_next, propagator_matrix=propagator_matrix)
+      ELSE
+         CALL get_rtp(rtp=rtp, dt=t, mos_ortho_new=mos_new, mos_ortho_old=mos_old, &
+                      mos_ortho_next=mos_next, propagator_matrix_canon=propagator_matrix)
+      END IF
 
       nspin = SIZE(mos_new)/2
       eps_arnoldi = rtp_control%eps_exp
@@ -234,18 +380,46 @@ CONTAINS
          CALL copy_dbcsr_to_fm(propagator_matrix(i)%matrix, propagator_matrix_fm(i)%matrix)
       END DO
 
+      ! need to reduce dimension of propagator_matrix_fm if linear dependencies in S were removed
+      NULLIFY (propagator_matrix_fm_red)
+      IF (ortho) THEN
+         ndep = rtp_control%nlindep
+         CALL cp_fm_get_info(propagator_matrix_fm(1)%matrix, nrow_global=nao)
+         ALLOCATE (propagator_matrix_fm_red(SIZE(propagator_matrix_fm)))
+         DO i = 1, SIZE(propagator_matrix_fm)
+            CALL cp_fm_create(propagator_matrix_fm_red(i)%matrix, &
+                              matrix_struct=rtp%canon_ortho%oo_oo_fmstruct, &
+                              name="prop_fm_red")
+            CALL cp_fm_to_fm_submat(propagator_matrix_fm(i)%matrix, propagator_matrix_fm_red(i)%matrix, &
+                                    nao - ndep, nao - ndep, 1, 1, 1, 1)
+         END DO
+      END IF
+
       DO ispin = 1, nspin
          re = ispin*2 - 1
          im = ispin*2
-         IF (rtp_control%fixed_ions .AND. .NOT. rtp%do_hfx) THEN
-            CALL arnoldi(mos_old(re:im), mos_new(re:im), &
-                         eps_arnoldi, Him=propagator_matrix_fm(im)%matrix, &
-                         mos_next=mos_next(re:im), narn_old=rtp%narn_old)
+         IF (.NOT. ortho) THEN
+            IF (rtp_control%fixed_ions .AND. .NOT. rtp%do_hfx) THEN
+               CALL arnoldi(mos_old(re:im), mos_new(re:im), &
+                            eps_arnoldi, Him=propagator_matrix_fm(im)%matrix, &
+                            mos_next=mos_next(re:im), narn_old=rtp%narn_old)
+            ELSE
+               CALL arnoldi(mos_old(re:im), mos_new(re:im), &
+                            eps_arnoldi, Hre=propagator_matrix_fm(re)%matrix, &
+                            Him=propagator_matrix_fm(im)%matrix, mos_next=mos_next(re:im), &
+                            narn_old=rtp%narn_old)
+            END IF
          ELSE
-            CALL arnoldi(mos_old(re:im), mos_new(re:im), &
-                         eps_arnoldi, Hre=propagator_matrix_fm(re)%matrix, &
-                         Him=propagator_matrix_fm(im)%matrix, mos_next=mos_next(re:im), &
-                         narn_old=rtp%narn_old)
+            IF (rtp_control%fixed_ions .AND. .NOT. rtp%do_hfx) THEN
+               CALL arnoldi(mos_old(re:im), mos_new(re:im), &
+                            eps_arnoldi, Him=propagator_matrix_fm_red(im)%matrix, &
+                            mos_next=mos_next(re:im), narn_old=rtp%narn_old)
+            ELSE
+               CALL arnoldi(mos_old(re:im), mos_new(re:im), &
+                            eps_arnoldi, Hre=propagator_matrix_fm_red(re)%matrix, &
+                            Him=propagator_matrix_fm_red(im)%matrix, mos_next=mos_next(re:im), &
+                            narn_old=rtp%narn_old)
+            END IF
          END IF
       END DO
 
@@ -253,6 +427,7 @@ CONTAINS
 !         CALL copy_fm_to_dbcsr(propagator_matrix_fm(i)%matrix,propagator_matrix(i)%matrix)
 !    END DO
       CALL cp_fm_vect_dealloc(propagator_matrix_fm)
+      IF (ortho) CALL cp_fm_vect_dealloc(propagator_matrix_fm_red)
 
       CALL timestop(handle)
 
@@ -338,61 +513,34 @@ CONTAINS
 ! **************************************************************************************************
 
    SUBROUTINE compute_exponential(propagator, propagator_matrix, rtp_control, rtp)
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: propagator, propagator_matrix
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: propagator, propagator_matrix
       TYPE(rtp_control_type), POINTER                    :: rtp_control
       TYPE(rt_prop_type), POINTER                        :: rtp
 
-      INTEGER                                            :: i, im, ispin, re
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: propagator_fm, propagator_matrix_fm
-
-      NULLIFY (propagator_fm)
-      ALLOCATE (propagator_fm(SIZE(propagator)))
-      NULLIFY (propagator_matrix_fm)
-      ALLOCATE (propagator_matrix_fm(SIZE(propagator_matrix)))
-      DO i = 1, SIZE(propagator)
-         ALLOCATE (propagator_fm(i)%matrix)
-         CALL cp_fm_create(propagator_fm(i)%matrix, &
-                           matrix_struct=rtp%ao_ao_fmstruct, &
-                           name="prop_fm")
-         CALL copy_dbcsr_to_fm(propagator(i)%matrix, propagator_fm(i)%matrix)
-         ALLOCATE (propagator_matrix_fm(i)%matrix)
-         CALL cp_fm_create(propagator_matrix_fm(i)%matrix, &
-                           matrix_struct=rtp%ao_ao_fmstruct, &
-                           name="prop_mat_fm")
-         CALL copy_dbcsr_to_fm(propagator_matrix(i)%matrix, propagator_matrix_fm(i)%matrix)
-      END DO
+      INTEGER                                            :: im, ispin, re
 
       DO ispin = 1, SIZE(propagator)/2
          re = 2*ispin - 1
          im = 2*ispin
-
          SELECT CASE (rtp_control%mat_exp)
-
          CASE (do_taylor)
             IF (rtp_control%fixed_ions .AND. .NOT. rtp%do_hfx) THEN
-               CALL taylor_only_imaginary(propagator_fm(re:im), propagator_matrix_fm(im)%matrix, &
+               CALL taylor_only_imaginary(propagator(re:im), propagator_matrix(im)%matrix, &
                                           rtp%orders(1, ispin), rtp%orders(2, ispin))
             ELSE
-               CALL taylor_full_complex(propagator_fm(re:im), propagator_matrix_fm(re)%matrix, propagator_matrix_fm(im)%matrix, &
+               CALL taylor_full_complex(propagator(re:im), propagator_matrix(re)%matrix, propagator_matrix(im)%matrix, &
                                         rtp%orders(1, ispin), rtp%orders(2, ispin))
             END IF
          CASE (do_pade)
             IF (rtp_control%fixed_ions .AND. .NOT. rtp%do_hfx) THEN
-               CALL exp_pade_only_imaginary(propagator_fm(re:im), propagator_matrix_fm(im)%matrix, &
+               CALL exp_pade_only_imaginary(propagator(re:im), propagator_matrix(im)%matrix, &
                                             rtp%orders(1, ispin), rtp%orders(2, ispin))
             ELSE
-               CALL exp_pade_full_complex(propagator_fm(re:im), propagator_matrix_fm(re)%matrix, propagator_matrix_fm(im)%matrix, &
+               CALL exp_pade_full_complex(propagator(re:im), propagator_matrix(re)%matrix, propagator_matrix(im)%matrix, &
                                           rtp%orders(1, ispin), rtp%orders(2, ispin))
             END IF
          END SELECT
       END DO
-
-      DO i = 1, SIZE(propagator)
-         CALL copy_fm_to_dbcsr(propagator_fm(i)%matrix, propagator(i)%matrix)
-         CALL copy_fm_to_dbcsr(propagator_matrix_fm(i)%matrix, propagator_matrix(i)%matrix)
-      END DO
-      CALL cp_fm_vect_dealloc(propagator_fm)
-      CALL cp_fm_vect_dealloc(propagator_matrix_fm)
 
    END SUBROUTINE compute_exponential
 

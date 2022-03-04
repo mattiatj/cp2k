@@ -50,7 +50,7 @@ MODULE rt_propagation_utils
         dbcsr_create, dbcsr_deallocate_matrix, dbcsr_desymmetrize, dbcsr_distribution_type, &
         dbcsr_filter, dbcsr_get_info, dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, &
         dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_multiply, &
-        dbcsr_p_type, dbcsr_print, dbcsr_scale, dbcsr_set, dbcsr_type, dbcsr_type_no_symmetry
+        dbcsr_p_type, dbcsr_scale, dbcsr_set, dbcsr_type, dbcsr_type_no_symmetry
    USE input_constants,                 ONLY: use_restart_wfn,&
                                               use_rt_restart
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
@@ -116,7 +116,6 @@ CONTAINS
       TYPE(qs_environment_type), POINTER                 :: qs_env
 
       CHARACTER(LEN=*), PARAMETER                        :: routineN = 'calc_S_derivs'
-      REAL(KIND=dp), PARAMETER                           :: one = 1.0_dp, zero = 0.0_dp
 
       INTEGER                                            :: col_atom, handle, i, j, m, maxder, n, &
                                                             nder, row_atom
@@ -132,6 +131,8 @@ CONTAINS
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(qs_ks_env_type), POINTER                      :: ks_env
       TYPE(rt_prop_type), POINTER                        :: rtp
+
+! REAL(KIND=dp), PARAMETER                           :: one = 1.0_dp, zero = 0.0_dp
 
       CALL timeset(routineN, handle)
 
@@ -365,19 +366,16 @@ CONTAINS
 !> \brief calculates the density from the complex MOs and passes the density to
 !>        qs_env.
 !> \param qs_env ...
-!> \param ortho ...
 !> \author Florian Schiffmann (02.09)
 ! **************************************************************************************************
 
-   SUBROUTINE calc_update_rho(qs_env, ortho)
+   SUBROUTINE calc_update_rho(qs_env)
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
-      LOGICAL, INTENT(IN), OPTIONAL                      :: ortho
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'calc_update_rho'
 
       INTEGER                                            :: handle, i, im, ncol, nrow, nspins, re
-      LOGICAL                                            :: my_ortho
       REAL(KIND=dp)                                      :: alpha
       TYPE(cp_fm_p_type)                                 :: mos_occ
       TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_new, mos_ortho_new
@@ -389,9 +387,6 @@ CONTAINS
       TYPE(rt_prop_type), POINTER                        :: rtp
 
       CALL timeset(routineN, handle)
-
-      my_ortho = .FALSE.
-      IF (PRESENT(ortho)) my_ortho = ortho
 
       NULLIFY (rho, ks_env, mos_new, rtp, dft_control)
       CALL get_qs_env(qs_env, &
@@ -430,9 +425,9 @@ CONTAINS
       END DO
 
       ! calculate density matrix in orthogonal basis
-      IF (my_ortho) THEN
-         WRITE (*, *) 'rho_ao'
-         CALL dbcsr_print(rho_ao(1)%matrix, matlab_format=.TRUE.)
+      IF (dft_control%rtp_control%canonical_ortho) THEN
+         ! WRITE (*, *) 'rho_ao'
+         ! CALL dbcsr_print(rho_ao(1)%matrix, matlab_format=.TRUE.)
          nspins = dft_control%nspins
          NULLIFY (mos_ortho_new, rho_co)
          CALL get_rtp(rtp=rtp, mos_ortho_new=mos_ortho_new, P_canon=rho_co)
@@ -442,7 +437,6 @@ CONTAINS
             alpha = 3*one - REAL(nspins/2, dp)
             CALL dbcsr_set(rho_co(i)%matrix, zero)
             CALL cp_fm_get_info(mos_ortho_new(re)%matrix, ncol_global=ncol, nrow_global=nrow)
-            WRITE (*, *) 'nrow', nrow
             CALL cp_fm_create(mos_occ%matrix, &
                               matrix_struct=mos_ortho_new(re)%matrix%matrix_struct, &
                               name="mos_occ_ortho")
@@ -461,8 +455,8 @@ CONTAINS
                                        alpha=alpha)
             CALL cp_fm_release(mos_occ%matrix)
          END DO
-         WRITE (*, *) 'rho_co'
-         CALL dbcsr_print(rho_co(1)%matrix, matlab_format=.TRUE.)
+         ! WRITE (*, *) 'rho_co'
+         ! CALL dbcsr_print(rho_co(1)%matrix, matlab_format=.TRUE.)
       END IF
 
       CALL qs_rho_update_rho(rho, qs_env)
@@ -490,7 +484,6 @@ CONTAINS
       TYPE(qs_environment_type), POINTER                 :: qs_env
 
       CHARACTER(len=*), PARAMETER :: routineN = 'calc_update_rho_sparse'
-      REAL(KIND=dp), PARAMETER                           :: zero = 0.0_dp
 
       INTEGER                                            :: handle, ispin
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: rho_ao, rho_ao_im, rho_new
@@ -499,6 +492,8 @@ CONTAINS
       TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(rtp_control_type), POINTER                    :: rtp_control
+
+! REAL(KIND=dp), PARAMETER                           :: zero = 0.0_dp
 
       NULLIFY (rho, ks_env, rtp, dft_control)
       CALL timeset(routineN, handle)
@@ -736,7 +731,7 @@ CONTAINS
       !    write(*,*) local_data(i,:)
       ! enddo
       ! normalize as ymatrix does NOT correspond to a unitary transformation
-      ! CALL orthonormalize_complex_mos(qs_env, coeffs_ortho, .TRUE.)
+      CALL orthonormalize_complex_mos(qs_env, coeffs_ortho, .TRUE.)
 
    END SUBROUTINE transform_to_canon_ortho_coeffs
 
@@ -906,13 +901,15 @@ CONTAINS
 
 ! **************************************************************************************************
 !> \brief ...
-!> \param qs_env ...
+!> \param rtp ...
+!> \param rtp_control ...
 !> \param matrix_ao ...
 !> \param matrix_co ...
 !> \param density ...
 ! **************************************************************************************************
-   SUBROUTINE canon_ortho_matrix_ao_to_co(qs_env, matrix_ao, matrix_co, density)
-      TYPE(qs_environment_type), POINTER                 :: qs_env
+   SUBROUTINE canon_ortho_matrix_ao_to_co(rtp, rtp_control, matrix_ao, matrix_co, density)
+      TYPE(rt_prop_type), POINTER                        :: rtp
+      TYPE(rtp_control_type), POINTER                    :: rtp_control
       TYPE(dbcsr_p_type), DIMENSION(:), INTENT(IN), &
          POINTER                                         :: matrix_ao
       TYPE(dbcsr_p_type), DIMENSION(:), INTENT(OUT), &
@@ -922,17 +919,11 @@ CONTAINS
       INTEGER                                            :: i, nao, noo
       TYPE(dbcsr_type), POINTER                          :: tmp, trsfmat, xmatrix_dbcsr, &
                                                             ymatrix_dbcsr
-      TYPE(dft_control_type), POINTER                    :: dft_control
-      TYPE(rt_prop_type), POINTER                        :: rtp
 
-      NULLIFY (rtp, xmatrix_dbcsr, ymatrix_dbcsr, trsfmat, dft_control)
-
-      CALL get_qs_env(qs_env, &
-                      dft_control=dft_control, &
-                      rtp=rtp)
+      NULLIFY (xmatrix_dbcsr, ymatrix_dbcsr, trsfmat)
 
       CALL dbcsr_get_info(matrix_ao(1)%matrix, nfullrows_total=nao)
-      noo = nao - dft_control%rtp_control%nlindep
+      noo = nao - rtp_control%nlindep
 
       CALL get_rtp(rtp, xmatrix_dbcsr=xmatrix_dbcsr, ymatrix_dbcsr=ymatrix_dbcsr)
       CPASSERT(ASSOCIATED(xmatrix_dbcsr) .AND. ASSOCIATED(ymatrix_dbcsr))
@@ -948,6 +939,7 @@ CONTAINS
 
       DO i = 1, SIZE(matrix_ao)
          CALL dbcsr_set(tmp, zero)
+         CALL dbcsr_set(matrix_co(i)%matrix, zero)
          CALL dbcsr_multiply("N", "N", one, matrix_ao(i)%matrix, trsfmat, zero, tmp, 1, nao, 1, noo)
          CALL dbcsr_multiply("T", "N", one, trsfmat, tmp, zero, matrix_co(i)%matrix, 1, noo, 1, noo)
       END DO
