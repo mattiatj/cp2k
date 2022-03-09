@@ -375,7 +375,7 @@ CONTAINS
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'calc_update_rho'
 
-      INTEGER                                            :: handle, i, im, ncol, nrow, nspins, re
+      INTEGER                                            :: handle, i, im, ncol, nspins, re
       REAL(KIND=dp)                                      :: alpha
       TYPE(cp_fm_p_type)                                 :: mos_occ
       TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_new, mos_ortho_new
@@ -397,6 +397,7 @@ CONTAINS
                       dft_control=dft_control)
 
       CALL get_rtp(rtp=rtp, mos_new=mos_new)
+      NULLIFY (rho_ao)
       CALL qs_rho_get(rho_struct=rho, rho_ao=rho_ao)
       DO i = 1, SIZE(mos_new)/2
          re = 2*i - 1; im = 2*i
@@ -426,17 +427,14 @@ CONTAINS
 
       ! calculate density matrix in orthogonal basis
       IF (dft_control%rtp_control%canonical_ortho) THEN
-         ! WRITE (*, *) 'rho_ao'
-         ! CALL dbcsr_print(rho_ao(1)%matrix, matlab_format=.TRUE.)
          nspins = dft_control%nspins
          NULLIFY (mos_ortho_new, rho_co)
          CALL get_rtp(rtp=rtp, mos_ortho_new=mos_ortho_new, P_canon=rho_co)
          DO i = 1, nspins
-            re = 2*i - 1
-            im = 2*i
-            alpha = 3*one - REAL(nspins/2, dp)
+            re = 2*i - 1; im = 2*i
+            alpha = 3*one - REAL(SIZE(mos_ortho_new)/2, dp)
             CALL dbcsr_set(rho_co(i)%matrix, zero)
-            CALL cp_fm_get_info(mos_ortho_new(re)%matrix, ncol_global=ncol, nrow_global=nrow)
+            CALL cp_fm_get_info(mos_ortho_new(re)%matrix, ncol_global=ncol)
             CALL cp_fm_create(mos_occ%matrix, &
                               matrix_struct=mos_ortho_new(re)%matrix%matrix_struct, &
                               name="mos_occ_ortho")
@@ -455,8 +453,12 @@ CONTAINS
                                        alpha=alpha)
             CALL cp_fm_release(mos_occ%matrix)
          END DO
-         ! WRITE (*, *) 'rho_co'
-         ! CALL dbcsr_print(rho_co(1)%matrix, matlab_format=.TRUE.)
+         IF (rtp%set_rho_with_ortho) THEN
+            DO i = 1, nspins
+               CALL dbcsr_set(rho_ao(i)%matrix, zero)
+            END DO
+            CALL canon_ortho_matrix_co_to_ao(qs_env, rho_co, rho_ao, .TRUE.)
+         END IF
       END IF
 
       CALL qs_rho_update_rho(rho, qs_env)
@@ -593,7 +595,6 @@ CONTAINS
 
       INTEGER                                            :: nao, ndep, output_unit
       REAL(kind=dp)                                      :: epseigval
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: seigval
       TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
       TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_tmp
       TYPE(cp_fm_type), POINTER                          :: mat_tmp, mat_tmp2, s_fm
@@ -618,7 +619,6 @@ CONTAINS
                       rtp=rtp)
       CALL dbcsr_get_info(matrix_s(1)%matrix, nfullrows_total=nao)
 
-      ALLOCATE (seigval(nao))
       scf_section => section_vals_get_subs_vals(input, "DFT%SCF")
       CALL section_vals_val_get(scf_section, "EPS_EIGVAL", r_val=epseigval)
 
@@ -637,11 +637,12 @@ CONTAINS
       CALL copy_dbcsr_to_fm(matrix_s(1)%matrix, s_fm)
 
       IF (.NOT. calc_trsfmatrices) THEN
-         CALL cp_fm_ortho_canon(s_fm, mat_tmp, ndep, epseigval, seigval)
+         CALL cp_fm_ortho_canon(s_fm, mat_tmp, ndep, epseigval)
       ELSE
-         CALL cp_fm_ortho_canon(s_fm, mat_tmp, ndep, epseigval, seigval, mat_tmp2)
+         CALL cp_fm_ortho_canon(s_fm, mat_tmp, ndep, epseigval, ymatrix=mat_tmp2)
       END IF
       rtp_control%nlindep = ndep
+      CALL cp_fm_release(s_fm)
 
       IF (calc_trsfmatrices) THEN
          CPASSERT(ASSOCIATED(rtp%canon_ortho))
@@ -670,10 +671,8 @@ CONTAINS
          END IF
       END IF
 
-      CALL cp_fm_release(s_fm)
       CALL cp_fm_release(mat_tmp)
       IF (calc_trsfmatrices) CALL cp_fm_release(mat_tmp2)
-      DEALLOCATE (seigval)
 
    END SUBROUTINE rt_canon_ortho
 

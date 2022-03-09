@@ -55,7 +55,7 @@ MODULE qs_scf_diagonalization
         dbcsr_type_symmetric
    USE input_constants,                 ONLY: &
         cholesky_dbcsr, cholesky_inverse, cholesky_off, cholesky_reduce, cholesky_restore, &
-        core_guess, general_roks, high_spin_roks, restart_guess
+        core_guess, general_roks, high_spin_roks, ortho_canon, ortho_symm, restart_guess
    USE input_section_types,             ONLY: section_vals_type
    USE kinds,                           ONLY: dp
    USE kpoint_methods,                  ONLY: kpoint_density_matrices,&
@@ -103,6 +103,7 @@ MODULE qs_scf_diagonalization
                                               lanczos_refinement_2v
    USE qs_scf_methods,                  ONLY: combine_ks_matrices,&
                                               eigensolver,&
+                                              eigensolver_canon,&
                                               eigensolver_dbcsr,&
                                               eigensolver_simple,&
                                               eigensolver_symm,&
@@ -260,7 +261,13 @@ CONTAINS
 
          IF (owns_ortho) DEALLOCATE (ortho)
       ELSE
-         ortho => scf_env%ortho
+         IF (scf_env%ortho_method == ortho_symm) THEN
+            ortho => scf_env%ortho
+         ELSEIF (scf_env%ortho_method == ortho_canon) THEN
+            ortho => scf_env%canon
+         ELSE
+            CPABORT("Unknown orthogonalization method")
+         END IF
 
          owns_ortho = .FALSE.
          IF (.NOT. ASSOCIATED(ortho)) THEN
@@ -270,15 +277,23 @@ CONTAINS
 
          IF (do_level_shift) THEN
          DO ispin = 1, nspin
-            CALL eigensolver_symm(matrix_ks_fm=scf_env%scf_work1(ispin)%matrix, &
-                                  mo_set=mos(ispin)%mo_set, &
-                                  ortho=ortho, &
-                                  work=scf_env%scf_work2, &
-                                  do_level_shift=do_level_shift, &
-                                  level_shift=scf_control%level_shift, &
-                                  matrix_u_fm=scf_env%ortho_m1, &
-                                  use_jacobi=use_jacobi, &
-                                  jacobi_threshold=scf_control%diagonalization%jacobi_threshold)
+            IF (scf_env%ortho_method == ortho_symm) THEN
+               CALL eigensolver_symm(matrix_ks_fm=scf_env%scf_work1(ispin)%matrix, &
+                                     mo_set=mos(ispin)%mo_set, &
+                                     ortho=ortho, &
+                                     work=scf_env%scf_work2, &
+                                     do_level_shift=do_level_shift, &
+                                     level_shift=scf_control%level_shift, &
+                                     matrix_u_fm=matrix_u_fm, &
+                                     use_jacobi=use_jacobi, &
+                                     jacobi_threshold=scf_control%diagonalization%jacobi_threshold)
+            ELSEIF (scf_env%ortho_method == ortho_canon) THEN
+               CALL eigensolver_canon(matrix_ks_fm=scf_env%scf_work1(ispin)%matrix, &
+                                      mo_set=mos(ispin)%mo_set, &
+                                      ortho=ortho, &
+                                      work=scf_env%scf_work2, &
+                                      ndep=scf_env%ndep)
+            END IF
          END DO
          ELSE
          DO ispin = 1, nspin

@@ -38,13 +38,9 @@ MODULE rt_propagation_types
                                               cp_fm_type
    USE cp_fm_vect,                      ONLY: cp_fm_vect_dealloc
    USE cp_log_handling,                 ONLY: cp_to_string
-   USE dbcsr_api,                       ONLY: dbcsr_create,&
-                                              dbcsr_deallocate_matrix,&
-                                              dbcsr_init_p,&
-                                              dbcsr_p_type,&
-                                              dbcsr_type,&
-                                              dbcsr_type_no_symmetry,&
-                                              dbcsr_type_symmetric
+   USE dbcsr_api,                       ONLY: &
+        dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_desymmetrize, dbcsr_init_p, &
+        dbcsr_p_type, dbcsr_set, dbcsr_type, dbcsr_type_no_symmetry, dbcsr_type_symmetric
    USE kinds,                           ONLY: dp
    USE qs_matrix_pools,                 ONLY: mpools_get,&
                                               qs_matrix_pools_type
@@ -137,6 +133,7 @@ MODULE rt_propagation_types
       REAL(KIND=dp)                               :: lanzcos_threshold
       INTEGER                                     :: newton_schulz_order
       LOGICAL                                     :: linear_scaling
+      LOGICAL                                     :: set_rho_with_ortho
    END TYPE rt_prop_type
 
 ! *** Public data types ***
@@ -314,11 +311,15 @@ CONTAINS
             CALL dbcsr_allocate_matrix_set(rtp%canon_ortho%P_canon, nspin)
             DO i = 1, nspin
                CALL dbcsr_init_p(rtp%canon_ortho%H_canon(i)%matrix)
-               CALL dbcsr_create(rtp%canon_ortho%H_canon(i)%matrix, template=template, &
-                                 name="H_canon "//TRIM(ADJUSTL(cp_to_string(i))), matrix_type=dbcsr_type_no_symmetry)
+               ! CALL dbcsr_create(rtp%canon_ortho%H_canon(i)%matrix, template=template, &
+               ! name="H_canon "//TRIM(ADJUSTL(cp_to_string(i))), matrix_type=dbcsr_type_no_symmetry)
+               CALL dbcsr_desymmetrize(template, rtp%canon_ortho%H_canon(i)%matrix)
+               CALL dbcsr_set(rtp%canon_ortho%H_canon(i)%matrix, 0.0_dp)
                CALL dbcsr_init_p(rtp%canon_ortho%P_canon(i)%matrix)
                CALL dbcsr_create(rtp%canon_ortho%P_canon(i)%matrix, template=template, &
                                  name="P_canon "//TRIM(ADJUSTL(cp_to_string(i))), matrix_type=dbcsr_type_symmetric)
+               CALL dbcsr_copy(rtp%canon_ortho%P_canon(i)%matrix, template)
+               CALL dbcsr_set(rtp%canon_ortho%P_canon(i)%matrix, 0.0_dp)
             END DO
 
             NULLIFY (rtp%canon_ortho%exp_H_canon_old)
@@ -408,6 +409,7 @@ CONTAINS
       rtp%iter = 0
       rtp%do_hfx = .FALSE.
       rtp%track_imag_density = .FALSE.
+      rtp%set_rho_with_ortho = .FALSE.
 
    END SUBROUTINE rt_prop_create
 

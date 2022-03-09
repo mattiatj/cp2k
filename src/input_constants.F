@@ -198,6 +198,10 @@ MODULE input_constants
                                                cholesky_inverse = 3, &
                                                cholesky_dbcsr = 4
 
+   ! if cholesky_off
+   INTEGER, PARAMETER, PUBLIC               :: ortho_symm = 0, &
+                                               ortho_canon = 1
+
    INTEGER, PARAMETER, PUBLIC               :: atomic_guess = 1, &
                                                restart_guess = 2, &
                                                random_guess = 3, &

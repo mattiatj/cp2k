@@ -99,14 +99,14 @@ MODULE qs_scf_types
    TYPE qs_scf_env_type
       TYPE(qs_outer_scf_type) :: outer_scf
       INTEGER :: ref_count, id_nr, iter_count
-      INTEGER :: cholesky_method, nelectron, method, mixing_method, nskip_mixing
+      INTEGER :: cholesky_method, nelectron, method, mixing_method, nskip_mixing, ortho_method, ndep
       REAL(KIND=dp) :: iter_param, iter_delta, p_mix_alpha, sum_zeff_corr
       CHARACTER(len=15) :: iter_method
       COMPLEX(KIND=dp), DIMENSION(:, :, :), POINTER :: cc_buffer
       LOGICAL :: print_iter_line, skip_mixing, skip_diis, needs_ortho
       TYPE(mixing_storage_type), POINTER :: mixing_store
       TYPE(cp_fm_p_type), DIMENSION(:), POINTER :: scf_work1
-      TYPE(cp_fm_type), POINTER  :: scf_work2, ortho, ortho_m1, s_half, s_minus_one
+      TYPE(cp_fm_type), POINTER  :: scf_work2, ortho, ortho_m1, s_half, s_minus_one, canon
       TYPE(krylov_space_type), POINTER :: krylov_space
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER :: p_delta, p_mix_new
       TYPE(dbcsr_type), POINTER :: ortho_dbcsr, buf1_dbcsr, buf2_dbcsr
@@ -158,6 +158,8 @@ CONTAINS
       scf_env%mixing_method = -1
       scf_env%p_mix_alpha = 1.0_dp
       scf_env%cholesky_method = -1
+      scf_env%ortho_method = -1
+      scf_env%ndep = 0
       scf_env%outer_scf%iter_count = 0
       scf_env%sum_zeff_corr = 0.0_dp
       NULLIFY (scf_env%outer_scf%variables)
@@ -171,6 +173,7 @@ CONTAINS
       NULLIFY (scf_env%ortho)
       NULLIFY (scf_env%ortho_dbcsr)
       NULLIFY (scf_env%ortho_m1)
+      NULLIFY (scf_env%canon)
       NULLIFY (scf_env%p_mix_new)
       NULLIFY (scf_env%ot_preconditioner)
       NULLIFY (scf_env%qs_ot_env)
@@ -296,6 +299,7 @@ CONTAINS
                CPASSERT(.TRUE.)
                CALL dbcsr_deallocate_matrix(scf_env%ortho_dbcsr)
             END IF
+            IF (ASSOCIATED(scf_env%canon)) CALL cp_fm_release(scf_env%canon)
             IF (ASSOCIATED(scf_env%buf1_dbcsr)) THEN
                ! we should not end up here, and give back using the pools
                CPASSERT(.TRUE.)

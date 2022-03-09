@@ -17,7 +17,8 @@ MODULE qs_scf_initialization
    USE cp_dbcsr_output,                 ONLY: write_fm_with_basis_info
    USE cp_fm_basic_linalg,              ONLY: cp_fm_triangular_invert
    USE cp_fm_cholesky,                  ONLY: cp_fm_cholesky_decompose
-   USE cp_fm_diag,                      ONLY: cp_fm_power
+   USE cp_fm_diag,                      ONLY: cp_fm_ortho_canon,&
+                                              cp_fm_power
    USE cp_fm_pool_types,                ONLY: cp_fm_pool_p_type,&
                                               fm_pool_get_el_struct
    USE cp_fm_struct,                    ONLY: cp_fm_struct_create,&
@@ -47,8 +48,8 @@ MODULE qs_scf_initialization
    USE input_constants,                 ONLY: &
         broy_mix, broy_mix_new, cholesky_dbcsr, cholesky_inverse, cholesky_off, &
         diag_block_davidson, diag_block_krylov, diag_filter_matrix, diag_ot, diag_standard, &
-        direct_p_mix, kerker_mix, multisec_mix, no_mix, ot2cdft, outer_scf_none, plus_u_lowdin, &
-        pulay_mix, wfi_frozen_method_nr, wfi_ps_method_nr, wfi_use_guess_method_nr
+        direct_p_mix, kerker_mix, multisec_mix, no_mix, ortho_canon, ot2cdft, outer_scf_none, &
+        plus_u_lowdin, pulay_mix, wfi_frozen_method_nr, wfi_ps_method_nr, wfi_use_guess_method_nr
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
                                               section_vals_type,&
                                               section_vals_val_get
@@ -158,6 +159,8 @@ CONTAINS
 
       CALL section_vals_val_get(my_scf_section, "CHOLESKY", i_val=scf_env%cholesky_method)
 
+      CALL section_vals_val_get(my_scf_section, "ORTHOGONALIZATION", i_val=scf_env%ortho_method)
+
       CALL qs_scf_ensure_mos(qs_env, scf_env)
 
       ! set flags for diagonalization
@@ -206,6 +209,7 @@ CONTAINS
       CALL section_vals_val_get(scf_section, "CHOLESKY", i_val=scf_env%cholesky_method)
       scf_control%use_diag = .TRUE.
       scf_control%diagonalization%method = diag_standard
+      CALL section_vals_val_get(scf_section, "ORTHOGONALIZATION", i_val=scf_env%ortho_method)
 
       CALL qs_scf_ensure_mos(qs_env, scf_env)
 
@@ -485,6 +489,12 @@ CONTAINS
                                  matrix_struct=ao_ao_fmstruct, &
                                  name="SCF"//TRIM(ADJUSTL(cp_to_string(scf_env%id_nr)))// &
                                  "ORTHO_MATRIX-1")
+            ELSE IF (scf_env%cholesky_method == cholesky_off) THEN
+               IF (scf_env%ortho_method == ortho_canon) THEN
+                  CALL cp_fm_create(scf_env%canon, &
+                                    matrix_struct=ao_ao_fmstruct, &
+                                    name="ORTHO CANON MATRIX")
+               END IF
             END IF
          END IF
          IF (.NOT. ASSOCIATED(scf_env%scf_work2)) THEN
@@ -943,6 +953,10 @@ CONTAINS
                                 scf_control%eps_eigval, ndep)
             END IF
             s_minus_half_available = .TRUE.
+            IF (scf_env%ortho_method == ortho_canon) THEN
+               CALL copy_dbcsr_to_fm(matrix_s(1)%matrix, scf_env%scf_work2)
+               CALL cp_fm_ortho_canon(scf_env%scf_work2, scf_env%canon, ndep, scf_control%eps_eigval)
+            END IF
          END IF
 
          IF (BTEST(cp_print_key_should_output(logger%iter_info, &
@@ -958,6 +972,7 @@ CONTAINS
                                               "DFT%PRINT%AO_MATRICES/ORTHO")
          END IF
       END IF
+      scf_env%ndep = ndep
 
       CALL get_mo_set(mo_set=mos(1)%mo_set, nao=nao)
 

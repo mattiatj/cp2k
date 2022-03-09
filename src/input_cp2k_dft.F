@@ -73,25 +73,25 @@ MODULE input_cp2k_dft
         manual_selection, mao_basis_ext, mao_basis_orb, mao_basis_prim, mao_projection, &
         mopac_guess, no_excitations, no_guess, numerical, oe_gllb, oe_lb, oe_none, oe_saop, &
         oe_sic, orb_dx2, orb_dxy, orb_dy2, orb_dyz, orb_dz2, orb_dzx, orb_px, orb_py, orb_pz, &
-        orb_s, ot_algo_irac, ot_algo_taylor_or_diag, ot_chol_irac, ot_lwdn_irac, ot_mini_broyden, &
-        ot_mini_cg, ot_mini_diis, ot_mini_sd, ot_poly_irac, ot_precond_full_all, &
-        ot_precond_full_kinetic, ot_precond_full_single, ot_precond_full_single_inverse, &
-        ot_precond_none, ot_precond_s_inverse, ot_precond_solver_default, &
-        ot_precond_solver_direct, ot_precond_solver_inv_chol, ot_precond_solver_update, &
-        outer_scf_basis_center_opt, outer_scf_becke_constraint, outer_scf_cdft_constraint, &
-        outer_scf_ddapc_constraint, outer_scf_hirshfeld_constraint, outer_scf_none, &
-        outer_scf_optimizer_bisect, outer_scf_optimizer_broyden, outer_scf_optimizer_diis, &
-        outer_scf_optimizer_newton, outer_scf_optimizer_newton_ls, outer_scf_optimizer_none, &
-        outer_scf_optimizer_sd, outer_scf_optimizer_secant, outer_scf_s2_constraint, &
-        plus_u_lowdin, plus_u_mulliken, plus_u_mulliken_charges, radius_covalent, radius_default, &
-        radius_single, radius_user, radius_vdw, random_guess, real_time_propagation, &
-        ref_charge_atomic, ref_charge_mulliken, rel_dkh, rel_none, rel_pot_erfc, rel_pot_full, &
-        rel_sczora_mp, rel_trans_atom, rel_trans_full, rel_trans_molecule, rel_zora, &
-        rel_zora_full, rel_zora_mp, restart_guess, rsdft_model, sccs_andreussi, &
-        sccs_derivative_cd3, sccs_derivative_cd5, sccs_derivative_cd7, sccs_derivative_fft, &
-        sccs_fattebert_gygi, shape_function_density, shape_function_gaussian, sic_ad, sic_eo, &
-        sic_list_all, sic_list_unpaired, sic_mauri_spz, sic_mauri_us, sic_none, slater, &
-        smear_energy_window, smear_fermi_dirac, smear_list, sparse_guess, tddfpt_davidson, &
+        orb_s, ortho_canon, ortho_symm, ot_algo_irac, ot_algo_taylor_or_diag, ot_chol_irac, &
+        ot_lwdn_irac, ot_mini_broyden, ot_mini_cg, ot_mini_diis, ot_mini_sd, ot_poly_irac, &
+        ot_precond_full_all, ot_precond_full_kinetic, ot_precond_full_single, &
+        ot_precond_full_single_inverse, ot_precond_none, ot_precond_s_inverse, &
+        ot_precond_solver_default, ot_precond_solver_direct, ot_precond_solver_inv_chol, &
+        ot_precond_solver_update, outer_scf_basis_center_opt, outer_scf_becke_constraint, &
+        outer_scf_cdft_constraint, outer_scf_ddapc_constraint, outer_scf_hirshfeld_constraint, &
+        outer_scf_none, outer_scf_optimizer_bisect, outer_scf_optimizer_broyden, &
+        outer_scf_optimizer_diis, outer_scf_optimizer_newton, outer_scf_optimizer_newton_ls, &
+        outer_scf_optimizer_none, outer_scf_optimizer_sd, outer_scf_optimizer_secant, &
+        outer_scf_s2_constraint, plus_u_lowdin, plus_u_mulliken, plus_u_mulliken_charges, &
+        radius_covalent, radius_default, radius_single, radius_user, radius_vdw, random_guess, &
+        real_time_propagation, ref_charge_atomic, ref_charge_mulliken, rel_dkh, rel_none, &
+        rel_pot_erfc, rel_pot_full, rel_sczora_mp, rel_trans_atom, rel_trans_full, &
+        rel_trans_molecule, rel_zora, rel_zora_full, rel_zora_mp, restart_guess, rsdft_model, &
+        sccs_andreussi, sccs_derivative_cd3, sccs_derivative_cd5, sccs_derivative_cd7, &
+        sccs_derivative_fft, sccs_fattebert_gygi, shape_function_density, shape_function_gaussian, &
+        sic_ad, sic_eo, sic_list_all, sic_list_unpaired, sic_mauri_spz, sic_mauri_us, sic_none, &
+        slater, smear_energy_window, smear_fermi_dirac, smear_list, sparse_guess, tddfpt_davidson, &
         tddfpt_excitations, tddfpt_lanczos, tddfpt_singlet, tddfpt_spin_cons, tddfpt_spin_flip, &
         tddfpt_triplet, use_mom_ref_coac, use_mom_ref_com, use_mom_ref_user, use_mom_ref_zero, &
         use_restart_wfn, use_rt_restart, use_scf_wfn, wannier_projection, weight_type_mass, &
@@ -4794,6 +4794,17 @@ CONTAINS
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
+      CALL keyword_create(keyword, __LOCATION__, name="ORTHOGONALIZATION", &
+                          description="Matrix used for orthogonalization if cholesky == off", &
+                          usage="ORTHOGONALIZATION SYMMETRIC", &
+                          default_i_val=ortho_symm, &
+                          enum_c_vals=s2a("SYMMETRIC", "CANONICAL"), &
+                          enum_desc=s2a("Symmetric: Use S**(-1/2)", &
+                                        "Canonical: Use Us**(-1/2)"), &
+                          enum_i_vals=(/ortho_symm, ortho_canon/))
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
       CALL keyword_create(keyword, __LOCATION__, name="EPS_EIGVAL", &
                           description="Throw away linear combinations of basis functions with a small eigenvalue in S", &
                           usage="EPS_EIGVAL 1.0", default_r_val=1.0e-5_dp)
@@ -8349,7 +8360,14 @@ CONTAINS
       CALL keyword_create(keyword, __LOCATION__, name="CANONICAL_ORTHO", &
                           description="Use canonical orthonormalization to remove linear dependencies in the overlap matrix."// &
                           "Uses the threshhold set by EPS_EIGVAL", &
-                          usage="CANONICAL_ORTHO", &
+                          usage="CANONICAL_ORTHO T", &
+                          default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="SET_RHO_WITH_ORTHO", &
+                          description="Use canonical orthonormalization to calculate density.", &
+                          usage="SET_RHO_WITH_ORTHO T", &
                           default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)

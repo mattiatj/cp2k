@@ -1330,27 +1330,25 @@ CONTAINS
 !> \param xmatrix X = U*s**(-1/2) orthogonalizes
 !> \param ndep ...
 !> \param epseigval ...
-!> \param seigval ...
 !> \param ymatrix ...
 ! **************************************************************************************************
-   SUBROUTINE cp_fm_ortho_canon(smatrix, xmatrix, ndep, epseigval, seigval, ymatrix)
+   SUBROUTINE cp_fm_ortho_canon(smatrix, xmatrix, ndep, epseigval, ymatrix)
 
       TYPE(cp_fm_type), POINTER                          :: smatrix, xmatrix
       INTEGER, INTENT(OUT)                               :: ndep
       REAL(kind=dp), INTENT(IN)                          :: epseigval
-      REAL(KIND=dp), DIMENSION(:), INTENT(OUT)           :: seigval
       TYPE(cp_fm_type), OPTIONAL, POINTER                :: ymatrix
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'cp_fm_ortho_canon'
 
       INTEGER                                            :: handle, i, icol, irow, nao, nc
-      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: seigvalsqrt
+      REAL(KIND=dp), ALLOCATABLE, DIMENSION(:)           :: seigval, seigvalsqrt
 
       CALL timeset(routineN, handle)
 
       ! Allocate eigenvalues
       CALL cp_fm_get_info(smatrix, nrow_global=nao)
-      ALLOCATE (seigvalsqrt(nao))
+      ALLOCATE (seigvalsqrt(nao), seigval(nao))
 
       ! Diagonalize -S matrix, this way the NULL space is at the end of the spectrum
       ! use xmatrix as temporary storage for the eigenvalues
@@ -1390,7 +1388,7 @@ CONTAINS
       seigvalsqrt(:) = 1.0_dp/SQRT(seigval(:))
       CALL cp_fm_column_scale(xmatrix, seigvalsqrt)
 
-      DEALLOCATE (seigvalsqrt)
+      DEALLOCATE (seigvalsqrt, seigval)
 
       CALL timestop(handle)
    END SUBROUTINE

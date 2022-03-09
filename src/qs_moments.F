@@ -2364,7 +2364,10 @@ CONTAINS
       IF (ALLOCATED(nlcom_rrv)) calc_rrv = .TRUE.
       IF (ALLOCATED(nlcom_rxrv)) calc_rxrv = .TRUE.
 
-      IF (.NOT. (calc_rv .OR. calc_rrv .OR. calc_rxrv)) RETURN
+      IF (.NOT. (calc_rv .OR. calc_rrv .OR. calc_rxrv)) THEN
+         CALL timestop(handle)
+         RETURN
+      END IF
 
       ! calculate expectation values
       ! real part

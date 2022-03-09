@@ -35,6 +35,7 @@ MODULE qs_scf_methods
    USE cp_fm_types,                     ONLY: cp_fm_create,&
                                               cp_fm_get_info,&
                                               cp_fm_release,&
+                                              cp_fm_set_element,&
                                               cp_fm_to_fm,&
                                               cp_fm_type
    USE cp_para_types,                   ONLY: cp_para_env_type
@@ -67,7 +68,8 @@ MODULE qs_scf_methods
              eigensolver_dbcsr, &
              eigensolver_symm, &
              eigensolver_simple, &
-             scf_env_density_mixing
+             scf_env_density_mixing, &
+             eigensolver_canon
 
    PRIVATE :: correct_mo_eigenvalues, shift_unocc_mos
 
@@ -390,6 +392,56 @@ CONTAINS
    END SUBROUTINE eigensolver_symm
 
 ! **************************************************************************************************
+!> \brief ...
+!> \param matrix_ks_fm ...
+!> \param mo_set ...
+!> \param ortho ...
+!> \param work ...
+!> \param ndep ...
+! **************************************************************************************************
+   SUBROUTINE eigensolver_canon(matrix_ks_fm, mo_set, ortho, work, ndep)
+      TYPE(cp_fm_type), POINTER                          :: matrix_ks_fm
+      TYPE(mo_set_type), INTENT(INOUT), POINTER          :: mo_set
+      TYPE(cp_fm_type), INTENT(IN), POINTER              :: ortho
+      TYPE(cp_fm_type), POINTER                          :: work
+      INTEGER, INTENT(IN)                                :: ndep
+
+      CHARACTER(len=*), PARAMETER                        :: routineN = 'eigensolver_canon'
+
+      INTEGER                                            :: handle, icol, nao, nmo
+      REAL(KIND=dp), DIMENSION(:), POINTER               :: mo_eigenvalues
+      TYPE(cp_fm_type), POINTER                          :: mo_coeff
+
+      CALL timeset(routineN, handle)
+
+      NULLIFY (mo_eigenvalues, mo_coeff)
+
+      CALL get_mo_set(mo_set, &
+                      nao=nao, &
+                      nmo=nmo, &
+                      eigenvalues=mo_eigenvalues, &
+                      mo_coeff=mo_coeff)
+
+      CPASSERT((nao - ndep) .GE. nmo)
+
+      CALL cp_gemm("T", "N", nao, nao, nao, 1.0_dp, ortho, matrix_ks_fm, 0.0_dp, work)
+      CALL cp_gemm("N", "N", nao, nao, nao, 1.0_dp, work, ortho, 0.0_dp, matrix_ks_fm)
+
+      IF (ndep .GT. 0) THEN
+         ! set diagonal values to save large value
+         DO icol = (nao - ndep) + 1, nao
+            CALL cp_fm_set_element(matrix_ks_fm, icol, icol, 10000.0_dp)
+         END DO
+      END IF
+      ! Diagonalize in orthogonal basis
+      CALL choose_eigv_solver(matrix=matrix_ks_fm, eigenvectors=work, eigenvalues=mo_eigenvalues)
+
+      ! Restore vectors C = U^(-1) * C*
+      CALL cp_gemm("N", "N", nao, nmo, (nao - ndep), 1.0_dp, ortho, work, 0.0_dp, mo_coeff)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE eigensolver_canon
 
 ! **************************************************************************************************
 !> \brief ...

@@ -68,6 +68,7 @@ MODULE rt_propagation
    USE qs_mo_types,                     ONLY: get_mo_set,&
                                               init_mo_set,&
                                               mo_set_p_type
+   USE qs_scf_types,                    ONLY: qs_scf_env_type
    USE rt_delta_pulse,                  ONLY: apply_delta_pulse,&
                                               apply_delta_pulse_mag,&
                                               apply_delta_pulse_periodic
@@ -164,6 +165,10 @@ CONTAINS
       IF (rtp_control%velocity_gauge) THEN
          rtp%do_hfx = .TRUE.
       END IF
+      NULLIFY (ls_scf_section)
+      ls_scf_section => section_vals_get_subs_vals(input, "DFT%REAL_TIME_PROPAGATION")
+      CALL section_vals_val_get(ls_scf_section, "SET_RHO_WITH_ORTHO", l_val=rtp%set_rho_with_ortho)
+
       ! Hmm, not really like to initialize with the structure of S but I reckon it is
       ! done everywhere like this
       IF (rtp%do_hfx .OR. rtp%track_imag_density) &
@@ -208,11 +213,12 @@ CONTAINS
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_ks, matrix_s, rho_new, rho_old
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
+      TYPE(qs_scf_env_type), POINTER                     :: scf_env
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(rtp_control_type), POINTER                    :: rtp_control
 
       NULLIFY (matrix_s, dft_control, rtp, rtp_control, mos, mos_old, mos_new, mos_ortho_old, mos_ortho_new)
-      NULLIFY (matrix_ks)
+      NULLIFY (matrix_ks, scf_env)
       CALL cite_reference(Andermatt2016)
 
       CALL get_qs_env(qs_env, &
@@ -220,15 +226,14 @@ CONTAINS
                       rtp=rtp, &
                       matrix_s=matrix_s, &
                       dft_control=dft_control, &
-                      matrix_ks=matrix_ks)
+                      matrix_ks=matrix_ks, &
+                      scf_env=scf_env)
       rtp_control => dft_control%rtp_control
 
       periodic_cell = ANY(cell%perd > 0)
       IF (rtp_control%canonical_ortho) THEN
          CALL rt_canon_ortho(qs_env, .TRUE.)
-         ! CALL dbcsr_print(matrix_ks(1)%matrix, matlab_format=.TRUE.)
          CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, matrix_ks, rtp%canon_ortho%H_canon, .FALSE.)
-         ! CALL canon_ortho_matrix_co_to_ao(qs_env, rtp%canon_ortho%H_canon, rtp%canon_ortho%P_canon, .FALSE.)
       END IF
 
       IF (.NOT. rtp%linear_scaling) THEN
@@ -260,7 +265,6 @@ CONTAINS
             END IF
             IF (rtp_control%canonical_ortho) THEN
                CALL transform_to_canon_ortho_coeffs(qs_env, mos_old, mos_ortho_old)
-               ! CALL transform_to_ao_coeffs(qs_env, mos_ortho_old, mos_old)
             END IF
          END IF
          DO i = 1, SIZE(mos_old)
