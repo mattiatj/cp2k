@@ -85,7 +85,7 @@ MODULE rt_propagation
                                               canon_ortho_matrix_ao_to_co,&
                                               get_restart_wfn,&
                                               rt_canon_ortho,&
-                                              transform_to_canon_ortho_coeffs
+                                              transform_to_co_coeffs
    USE rt_propagation_velocity_gauge,   ONLY: velocity_gauge_ks_matrix
    USE rt_propagator_init,              ONLY: init_propagators,&
                                               rt_initialize_rho_from_mos
@@ -245,12 +245,18 @@ CONTAINS
                IF (dft_control%qs_control%dftb) &
                   CALL build_dftb_overlap(qs_env, 1, matrix_s)
                IF (rtp_control%periodic) THEN
-                  CALL apply_delta_pulse_periodic(qs_env, mos_old, mos_new)
+                  CALL apply_delta_pulse_periodic(qs_env, mos_old, mos_new, .FALSE.)
+                  IF (rtp_control%canonical_ortho) THEN
+                     CALL apply_delta_pulse_periodic(qs_env, mos_ortho_old, mos_ortho_new, .TRUE.)
+                  END IF
                ELSE
                   IF (periodic_cell) THEN
                      CPWARN("This application of the delta pulse is not compatible with PBC!")
                   END IF
-                  CALL apply_delta_pulse(qs_env, mos_old, mos_new)
+                  CALL apply_delta_pulse(qs_env, mos_old, mos_new, .FALSE.)
+                  IF (rtp_control%canonical_ortho) THEN
+                     CALL apply_delta_pulse(qs_env, mos_ortho_old, mos_ortho_new, .TRUE.)
+                  END IF
                END IF
             ELSE IF (rtp_control%apply_delta_pulse_mag) THEN
                IF (periodic_cell) THEN
@@ -262,9 +268,9 @@ CONTAINS
                   CALL cp_fm_to_fm(mos(i)%mo_set%mo_coeff, mos_old(2*i - 1)%matrix)
                   CALL cp_fm_set_all(mos_old(2*i)%matrix, zero, zero)
                END DO
-            END IF
-            IF (rtp_control%canonical_ortho) THEN
-               CALL transform_to_canon_ortho_coeffs(qs_env, mos_old, mos_ortho_old)
+               IF (rtp_control%canonical_ortho) THEN
+                  CALL transform_to_co_coeffs(qs_env, mos_old, mos_ortho_old)
+               END IF
             END IF
          END IF
          DO i = 1, SIZE(mos_old)

@@ -294,11 +294,6 @@ CONTAINS
          END IF
       END IF
 
-      ! IF (rtp_control%canonical_ortho) THEN
-      !    CALL transform_to_canon_ortho_coeffs(qs_env, rtp%mos%old, rtp%mos_ortho%old)
-      !    CALL transform_to_canon_ortho_coeffs(qs_env, rtp%mos%new, rtp%mos_ortho%new)
-      ! END IF
-
       CALL timestop(handle)
 
    END SUBROUTINE propagation_step

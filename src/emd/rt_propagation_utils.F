@@ -37,6 +37,7 @@ MODULE rt_propagation_utils
                                               cp_fm_release,&
                                               cp_fm_set_all,&
                                               cp_fm_to_fm,&
+                                              cp_fm_to_fm_submat,&
                                               cp_fm_type
    USE cp_fm_vect,                      ONLY: cp_fm_vect_dealloc
    USE cp_gemm_interface,               ONLY: cp_gemm
@@ -92,13 +93,21 @@ MODULE rt_propagation_utils
              calc_update_rho_sparse, &
              calculate_P_imaginary, &
              rt_canon_ortho, &
-             transform_to_canon_ortho_coeffs, &
+             transform_to_co_coeffs, &
              orthonormalize_complex_mos, &
              canon_ortho_matrix_ao_to_co, &
              canon_ortho_matrix_co_to_ao, &
-             transform_to_ao_coeffs
+             canon_ortho_dbcsr_to_fm_reduced
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'rt_propagation_utils'
+
+   INTERFACE canon_ortho_matrix_ao_to_co
+      MODULE PROCEDURE canon_ortho_matrix_ao_to_co_dbcsr_p, canon_ortho_matrix_ao_to_co_dbcsr
+   END INTERFACE
+
+   INTERFACE transform_to_co_coeffs
+      MODULE PROCEDURE transform_to_co_coeffs_p_type, transform_to_co_coeffs_type
+   END INTERFACE
 
 CONTAINS
 
@@ -682,7 +691,7 @@ CONTAINS
 !> \param coeffs ...
 !> \param coeffs_ortho ...
 ! **************************************************************************************************
-   SUBROUTINE transform_to_canon_ortho_coeffs(qs_env, coeffs, coeffs_ortho)
+   SUBROUTINE transform_to_co_coeffs_p_type(qs_env, coeffs, coeffs_ortho)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(cp_fm_p_type), DIMENSION(:), INTENT(IN), &
          POINTER                                         :: coeffs
@@ -695,10 +704,7 @@ CONTAINS
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(rt_prop_type), POINTER                        :: rtp
 
-!, i
-! REAL(KIND=dp), pointer, DIMENSION(:,:)           :: local_data
-
-      NULLIFY (dft_control, matrix_s, rtp)
+      NULLIFY (dft_control, matrix_s, rtp, ymatrix)
       CALL get_qs_env(qs_env, &
                       dft_control=dft_control, &
                       matrix_s=matrix_s, &
@@ -710,12 +716,6 @@ CONTAINS
       CALL get_rtp(rtp, ymatrix=ymatrix)
       CPASSERT(ASSOCIATED(ymatrix))
 
-      ! write(*,*) 'coeffs'
-      ! call cp_fm_get_info(coeffs(1)%matrix, local_data = local_data)
-      ! do i = 1, size(local_data, 1)
-      !    write(*,*) local_data(i,:)
-      ! enddo
-
       DO ispin = 1, dft_control%nspins ! spins
          CALL cp_fm_get_info(coeffs(2*ispin)%matrix, ncol_global=nmo)
          DO j = 1, 2               ! real and imaginary part
@@ -724,15 +724,45 @@ CONTAINS
          END DO
       END DO
 
-      ! write(*,*) 'coeffs_ortho'
-      ! call cp_fm_get_info(coeffs_ortho(1)%matrix, local_data = local_data)
-      ! do i = 1, size(local_data, 1)
-      !    write(*,*) local_data(i,:)
-      ! enddo
       ! normalize as ymatrix does NOT correspond to a unitary transformation
       CALL orthonormalize_complex_mos(qs_env, coeffs_ortho, .TRUE.)
 
-   END SUBROUTINE transform_to_canon_ortho_coeffs
+   END SUBROUTINE transform_to_co_coeffs_p_type
+
+! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param coeffs ...
+!> \param coeffs_ortho ...
+! **************************************************************************************************
+   SUBROUTINE transform_to_co_coeffs_type(qs_env, coeffs, coeffs_ortho)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(cp_fm_type), INTENT(IN), POINTER              :: coeffs
+      TYPE(cp_fm_type), INTENT(out), POINTER             :: coeffs_ortho
+
+      INTEGER                                            :: nao, nmo, noo
+      TYPE(cp_fm_type), POINTER                          :: ymatrix
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(rt_prop_type), POINTER                        :: rtp
+
+      NULLIFY (dft_control, matrix_s, rtp, ymatrix)
+      CALL get_qs_env(qs_env, &
+                      dft_control=dft_control, &
+                      matrix_s=matrix_s, &
+                      rtp=rtp)
+
+      CALL dbcsr_get_info(matrix_s(1)%matrix, nfullrows_total=nao)
+      noo = nao - dft_control%rtp_control%nlindep
+
+      CALL get_rtp(rtp, ymatrix=ymatrix)
+      CPASSERT(ASSOCIATED(ymatrix))
+
+      CALL cp_fm_get_info(coeffs, ncol_global=nmo)
+      CALL cp_gemm("T", "N", noo, nmo, nao, 1.0_dp, ymatrix, coeffs, 0.0_dp, &
+                   coeffs_ortho)
+
+   END SUBROUTINE transform_to_co_coeffs_type
 
 ! **************************************************************************************************
 !> \brief ...
@@ -906,7 +936,7 @@ CONTAINS
 !> \param matrix_co ...
 !> \param density ...
 ! **************************************************************************************************
-   SUBROUTINE canon_ortho_matrix_ao_to_co(rtp, rtp_control, matrix_ao, matrix_co, density)
+   SUBROUTINE canon_ortho_matrix_ao_to_co_dbcsr_p(rtp, rtp_control, matrix_ao, matrix_co, density)
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(rtp_control_type), POINTER                    :: rtp_control
       TYPE(dbcsr_p_type), DIMENSION(:), INTENT(IN), &
@@ -945,7 +975,52 @@ CONTAINS
 
       CALL dbcsr_deallocate_matrix(tmp)
 
-   END SUBROUTINE canon_ortho_matrix_ao_to_co
+   END SUBROUTINE canon_ortho_matrix_ao_to_co_dbcsr_p
+
+! **************************************************************************************************
+!> \brief ...
+!> \param rtp ...
+!> \param rtp_control ...
+!> \param matrix_ao ...
+!> \param matrix_co ...
+!> \param density ...
+! **************************************************************************************************
+   SUBROUTINE canon_ortho_matrix_ao_to_co_dbcsr(rtp, rtp_control, matrix_ao, matrix_co, density)
+      TYPE(rt_prop_type), POINTER                        :: rtp
+      TYPE(rtp_control_type), POINTER                    :: rtp_control
+      TYPE(dbcsr_type), INTENT(IN), POINTER              :: matrix_ao
+      TYPE(dbcsr_type), INTENT(OUT), POINTER             :: matrix_co
+      LOGICAL, INTENT(IN)                                :: density
+
+      INTEGER                                            :: nao, noo
+      TYPE(dbcsr_type), POINTER                          :: tmp, trsfmat, xmatrix_dbcsr, &
+                                                            ymatrix_dbcsr
+
+      NULLIFY (xmatrix_dbcsr, ymatrix_dbcsr, trsfmat)
+
+      CALL dbcsr_get_info(matrix_ao, nfullrows_total=nao)
+      noo = nao - rtp_control%nlindep
+
+      CALL get_rtp(rtp, xmatrix_dbcsr=xmatrix_dbcsr, ymatrix_dbcsr=ymatrix_dbcsr)
+      CPASSERT(ASSOCIATED(xmatrix_dbcsr) .AND. ASSOCIATED(ymatrix_dbcsr))
+      IF (density) THEN
+         trsfmat => ymatrix_dbcsr
+      ELSE
+         trsfmat => xmatrix_dbcsr
+      END IF
+
+      NULLIFY (tmp)
+      ALLOCATE (tmp)
+      CALL dbcsr_create(tmp, name='tmp', template=xmatrix_dbcsr, matrix_type=dbcsr_type_no_symmetry)
+
+      CALL dbcsr_set(tmp, zero)
+      CALL dbcsr_set(matrix_co, zero)
+      CALL dbcsr_multiply("N", "N", one, matrix_ao, trsfmat, zero, tmp, 1, nao, 1, noo)
+      CALL dbcsr_multiply("T", "N", one, trsfmat, tmp, zero, matrix_co, 1, noo, 1, noo)
+
+      CALL dbcsr_deallocate_matrix(tmp)
+
+   END SUBROUTINE canon_ortho_matrix_ao_to_co_dbcsr
 
 ! **************************************************************************************************
 !> \brief ...
@@ -999,5 +1074,45 @@ CONTAINS
       CALL dbcsr_deallocate_matrix(tmp)
 
    END SUBROUTINE canon_ortho_matrix_co_to_ao
+
+! **************************************************************************************************
+!> \brief transform dbcsr matrix to fm matrix with reduced dimensions
+!> \param qs_env ...
+!> \param dbcsr_matrix ...
+!> \param fm_matrix_red ...
+! **************************************************************************************************
+   SUBROUTINE canon_ortho_dbcsr_to_fm_reduced(qs_env, dbcsr_matrix, fm_matrix_red)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(dbcsr_type), INTENT(IN), POINTER              :: dbcsr_matrix
+      TYPE(cp_fm_type), INTENT(OUT), POINTER             :: fm_matrix_red
+
+      INTEGER                                            :: nao, noo
+      TYPE(cp_fm_type), POINTER                          :: tmp_ao
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(rt_prop_type), POINTER                        :: rtp
+      TYPE(rtp_control_type), POINTER                    :: rtp_control
+
+      NULLIFY (rtp, matrix_s, dft_control)
+
+      CALL get_qs_env(qs_env, &
+                      matrix_s=matrix_s, &
+                      rtp=rtp, &
+                      dft_control=dft_control)
+
+      rtp_control => dft_control%rtp_control
+
+      CALL dbcsr_get_info(matrix_s(1)%matrix, nfullrows_total=nao)
+      noo = nao - rtp_control%nlindep
+
+      NULLIFY (tmp_ao)
+      CALL cp_fm_create(tmp_ao, matrix_struct=rtp%ao_ao_fmstruct, name="tmp_ao")
+      CALL cp_fm_set_all(tmp_ao, 0.0_dp)
+      CALL copy_dbcsr_to_fm(dbcsr_matrix, tmp_ao)
+      CALL cp_fm_to_fm_submat(tmp_ao, fm_matrix_red, noo, noo, 1, 1, 1, 1)
+
+      CALL cp_fm_release(tmp_ao)
+
+   END SUBROUTINE canon_ortho_dbcsr_to_fm_reduced
 
 END MODULE rt_propagation_utils
