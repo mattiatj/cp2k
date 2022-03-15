@@ -108,7 +108,7 @@ CONTAINS
       CHARACTER(len=*), PARAMETER                        :: routineN = 'propagation_step'
 
       INTEGER                                            :: aspc_order, handle, i, im, re, unit_nr
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: delta_mos, delta_mos_ortho, mos_new
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: delta_mos, mos_new
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: delta_P, H_last_iter, ks_mix, ks_mix_im, &
                                                             matrix_ks, matrix_ks_im, matrix_s, &
@@ -123,13 +123,11 @@ CONTAINS
          unit_nr = -1
       END IF
 
-      NULLIFY (delta_P, rho_new, delta_mos, mos_new, delta_mos_ortho)
+      NULLIFY (delta_P, rho_new, delta_mos, mos_new)
       NULLIFY (ks_mix, ks_mix_im)
       ! get everything needed and set some values
       CALL get_qs_env(qs_env, matrix_s=matrix_s)
       IF (rtp%iter == 1) THEN
-         rtp%iter_conv = -1
-         rtp%iter_conv_ortho = -1
          CALL qs_energies_init(qs_env, .FALSE.)
          ! add additional terms for the velocity gauge to matrix_h and matrix_h_im
          ! should be called imediately after qs_energies_init and before qs_ks_update_qs_env
@@ -142,12 +140,10 @@ CONTAINS
             CALL s_matrices_create(matrix_s, rtp)
          END IF
          rtp%delta_iter = 100.0_dp
-         rtp%delta_iter_ortho = 100.0_dp
          rtp%mixing_factor = 1.0_dp
          rtp%mixing = .FALSE.
          aspc_order = rtp_control%aspc_order
-         CALL aspc_extrapolate(rtp, matrix_s, aspc_order, .FALSE.)
-         IF (rtp_control%canonical_ortho) CALL aspc_extrapolate(rtp, matrix_s, aspc_order, .TRUE.)
+         CALL aspc_extrapolate(rtp, rtp_control, matrix_s, aspc_order)
          IF (rtp%linear_scaling) THEN
             CALL calc_update_rho_sparse(qs_env)
          ELSE
@@ -159,7 +155,6 @@ CONTAINS
          CALL calc_S_derivs(qs_env)
       END IF
       rtp%converged = .FALSE.
-      rtp%converged_ortho = .FALSE.
 
       IF (rtp%linear_scaling) THEN
          ! keep temporary copy of the starting density matrix to check for convergence
@@ -182,17 +177,6 @@ CONTAINS
                               name="delta_mos"//TRIM(ADJUSTL(cp_to_string(i))))
             CALL cp_fm_to_fm(mos_new(i)%matrix, delta_mos(i)%matrix)
          END DO
-         IF (rtp_control%canonical_ortho) THEN
-            NULLIFY (mos_new)
-            CALL get_rtp(rtp=rtp, mos_ortho_new=mos_new)
-            ALLOCATE (delta_mos_ortho(SIZE(mos_new)))
-            DO i = 1, SIZE(mos_new)
-               CALL cp_fm_create(delta_mos_ortho(i)%matrix, &
-                                 matrix_struct=mos_new(i)%matrix%matrix_struct, &
-                                 name="delta_mos_ortho"//TRIM(ADJUSTL(cp_to_string(i))))
-               CALL cp_fm_to_fm(mos_new(i)%matrix, delta_mos_ortho(i)%matrix)
-            END DO
-         END IF
       END IF
 
       CALL get_qs_env(qs_env, &
@@ -201,6 +185,7 @@ CONTAINS
 
       CALL get_rtp(rtp=rtp, H_last_iter=H_last_iter)
       IF (rtp%mixing) THEN
+         IF (rtp_control%canonical_ortho) CPABORT("no mixing in CO yet")
          IF (unit_nr > 0) THEN
             WRITE (unit_nr, '(t3,a,2f16.8)') "Mixing the Hamiltonians to improve robustness, mixing factor: ", rtp%mixing_factor
          END IF
@@ -222,7 +207,7 @@ CONTAINS
                CALL dbcsr_add(ks_mix_im(i)%matrix, H_last_iter(im)%matrix, 1.0_dp, 1.0_dp - rtp%mixing_factor)
             END IF
          END DO
-         CALL calc_SinvH(rtp, ks_mix, ks_mix_im, rtp_control, ortho=.FALSE.)
+         CALL calc_SinvH(rtp, ks_mix, ks_mix_im, rtp_control)
          DO i = 1, SIZE(matrix_ks)
             re = 2*i - 1
             im = 2*i
@@ -233,32 +218,24 @@ CONTAINS
          END DO
          CALL dbcsr_deallocate_matrix_set(ks_mix)
          CALL dbcsr_deallocate_matrix_set(ks_mix_im)
-         IF (rtp_control%canonical_ortho) CPABORT("no mixing in CO yet")
       ELSE
-         CALL calc_SinvH(rtp, matrix_ks, matrix_ks_im, rtp_control, ortho=.FALSE.)
-         IF (rtp_control%canonical_ortho) CALL calc_SinvH(rtp, matrix_ks, matrix_ks_im, rtp_control, ortho=.TRUE.)
+         CALL calc_SinvH(rtp, matrix_ks, matrix_ks_im, rtp_control)
          DO i = 1, SIZE(matrix_ks)
             re = 2*i - 1
             im = 2*i
-            CALL dbcsr_copy(H_last_iter(re)%matrix, matrix_ks(i)%matrix)
-            IF (rtp%do_hfx) THEN
-               CALL dbcsr_copy(H_last_iter(im)%matrix, matrix_ks_im(i)%matrix)
+            IF (.NOT. rtp_control%canonical_ortho) THEN
+               CALL dbcsr_copy(H_last_iter(re)%matrix, matrix_ks(i)%matrix)
+               IF (rtp%do_hfx) THEN
+                  CALL dbcsr_copy(H_last_iter(im)%matrix, matrix_ks_im(i)%matrix)
+               END IF
+            ELSE
+               CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, matrix_ks(i)%matrix, &
+                                                H_last_iter(re)%matrix, density=.FALSE.)
             END IF
          END DO
-         IF (rtp_control%canonical_ortho) THEN
-            NULLIFY (H_last_iter)
-            CALL get_rtp(rtp, H_last_iter_canon=H_last_iter)
-            CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, matrix_ks, rtp%canon_ortho%H_canon, .FALSE.)
-            DO i = 1, SIZE(matrix_ks)
-               re = 2*i - 1
-               im = 2*i
-               CALL dbcsr_copy(H_last_iter(re)%matrix, rtp%canon_ortho%H_canon(i)%matrix)
-            END DO
-         END IF
       END IF
 
-      CALL compute_propagator_matrix(rtp, rtp_control%propagator, ortho=.FALSE.)
-      IF (rtp_control%canonical_ortho) CALL compute_propagator_matrix(rtp, rtp_control%propagator, ortho=.TRUE.)
+      CALL compute_propagator_matrix(rtp, rtp_control%propagator)
 
       SELECT CASE (rtp_control%mat_exp)
       CASE (do_pade, do_taylor)
@@ -266,32 +243,23 @@ CONTAINS
             CALL propagate_exp_density(rtp, rtp_control)
             CALL calc_update_rho_sparse(qs_env)
          ELSE
-            CALL propagate_exp(rtp, rtp_control, ortho=.FALSE.)
-            IF (rtp_control%canonical_ortho) THEN
-               CALL propagate_exp(rtp, rtp_control, ortho=.TRUE.)
-            END IF
+            CALL propagate_exp(rtp, rtp_control)
             CALL calc_update_rho(qs_env)
          END IF
       CASE (do_arnoldi)
-         CALL propagate_arnoldi(rtp, rtp_control, ortho=.FALSE.)
-         IF (rtp_control%canonical_ortho) CALL propagate_arnoldi(rtp, rtp_control, ortho=.TRUE.)
+         CALL propagate_arnoldi(rtp, rtp_control)
          CALL calc_update_rho(qs_env)
       CASE (do_bch)
          CALL propagate_bch(rtp, rtp_control)
          CALL calc_update_rho_sparse(qs_env)
       END SELECT
-      IF (.NOT. rtp_control%canonical_ortho) THEN
-         CALL step_finalize(qs_env, rtp_control, delta_mos, delta_P)
-      ELSE
-         CALL step_finalize(qs_env, rtp_control, delta_mos, delta_P, delta_mos_ortho)
-      END IF
+
+      CALL step_finalize(qs_env, rtp_control, delta_mos, delta_P)
+
       IF (rtp%linear_scaling) THEN
          CALL dbcsr_deallocate_matrix_set(delta_P)
       ELSE
          CALL cp_fm_vect_dealloc(delta_mos)
-         IF (rtp_control%canonical_ortho) THEN
-            CALL cp_fm_vect_dealloc(delta_mos_ortho)
-         END IF
       END IF
 
       CALL timestop(handle)
@@ -307,17 +275,14 @@ CONTAINS
 !> \param rtp_control ...
 !> \param delta_mos ...
 !> \param delta_P ...
-!> \param delta_mos_ortho ...
 !> \author Florian Schiffmann (02.09)
 ! **************************************************************************************************
 
-   SUBROUTINE step_finalize(qs_env, rtp_control, delta_mos, delta_P, delta_mos_ortho)
+   SUBROUTINE step_finalize(qs_env, rtp_control, delta_mos, delta_P)
       TYPE(qs_environment_type), POINTER                 :: qs_env
-      TYPE(rtp_control_type), POINTER                    :: rtp_control
+      TYPE(rtp_control_type), INTENT(IN), POINTER        :: rtp_control
       TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: delta_mos
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: delta_P
-      TYPE(cp_fm_p_type), DIMENSION(:), OPTIONAL, &
-         POINTER                                         :: delta_mos_ortho
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'step_finalize'
 
@@ -339,14 +304,11 @@ CONTAINS
          IF (rtp%linear_scaling) THEN
             CALL rt_convergence_density(rtp, delta_P, rtp%delta_iter)
          ELSE
-            CALL rt_convergence(rtp, s_mat(1)%matrix, delta_mos, rtp%delta_iter, ortho=.FALSE.)
+            CALL rt_convergence(rtp, rtp_control, s_mat(1)%matrix, delta_mos, rtp%delta_iter)
          END IF
          rtp%converged = (rtp%delta_iter .LT. rtp_control%eps_ener)
-         IF (rtp%converged) THEN
-            IF (rtp%iter_conv .LT. 0) rtp%iter_conv = rtp%iter
-         END IF
-         !Apply mixing if scf loop is not converging
 
+         !Apply mixing if scf loop is not converging
          !It would be better to redo the current step with mixixng,
          !but currently the decision is made to use mixing from the next step on
          IF (rtp_control%sc_check_start .LT. rtp%iter + 1) THEN
@@ -355,18 +317,9 @@ CONTAINS
                rtp%mixing = .TRUE.
             END IF
          END IF
-         ! check convergence of orthogonal basis if required
-         IF (PRESENT(delta_mos_ortho)) THEN
-            CPASSERT(ASSOCIATED(delta_mos_ortho))
-            CALL rt_convergence(rtp, s_mat(1)%matrix, delta_mos_ortho, rtp%delta_iter_ortho, ortho=.TRUE.)
-            rtp%converged_ortho = (rtp%delta_iter_ortho .LT. rtp_control%eps_ener)
-            IF (rtp%converged_ortho) THEN
-               IF (rtp%iter_conv_ortho .LT. 0) rtp%iter_conv_ortho = rtp%iter
-            END IF
-         END IF
       END IF
 
-      IF (rtp%converged .AND. (rtp%iter .EQ. rtp%iter_conv)) THEN
+      IF (rtp%converged) THEN
          IF (rtp%linear_scaling) THEN
             CALL get_rtp(rtp=rtp, rho_old=rho_old, rho_new=rho_new)
             CALL purify_mcweeny_complex_nonorth(rho_new, s_mat, rtp%filter_eps, rtp%filter_eps_small, &
@@ -382,32 +335,16 @@ CONTAINS
                CALL cp_fm_to_fm(mos_new(i)%matrix, mos_old(i)%matrix)
             END DO
          END IF
-         IF (rtp_control%propagator == do_em) CALL calc_SinvH(rtp, matrix_ks, matrix_ks_im, rtp_control, ortho=.FALSE.)
+         IF (rtp_control%propagator == do_em) CALL calc_SinvH(rtp, matrix_ks, matrix_ks_im, rtp_control)
          DO i = 1, SIZE(exp_H_new)
             CALL dbcsr_copy(exp_H_old(i)%matrix, exp_H_new(i)%matrix)
          END DO
          ihist = MOD(rtp%istep, rtp_control%aspc_order) + 1
          IF (rtp_control%fixed_ions) THEN
-            CALL put_data_to_history(rtp, rho=rho_new, mos=mos_new, ihist=ihist, ortho=.FALSE.)
+            CALL put_data_to_history(rtp, rho=rho_new, mos=mos_new, ihist=ihist)
          ELSE
-            CALL put_data_to_history(rtp, rho=rho_new, mos=mos_new, s_mat=s_mat, ihist=ihist, ortho=.FALSE.)
+            CALL put_data_to_history(rtp, rho=rho_new, mos=mos_new, s_mat=s_mat, ihist=ihist)
          END IF
-      END IF
-
-      IF (rtp%converged_ortho .AND. (rtp%iter .EQ. rtp%iter_conv_ortho)) THEN
-         NULLIFY (mos_old, mos_new, exp_H_new, exp_H_old, rho_new)
-         CALL get_rtp(rtp=rtp, mos_ortho_old=mos_old, mos_ortho_new=mos_new, exp_H_canon_old=exp_H_old, &
-                      exp_H_canon_new=exp_H_new)
-         DO i = 1, SIZE(mos_new)
-            CALL cp_fm_to_fm(mos_new(i)%matrix, mos_old(i)%matrix)
-         END DO
-         DO i = 1, SIZE(exp_H_new)
-            CALL dbcsr_copy(exp_H_old(i)%matrix, exp_H_new(i)%matrix)
-         END DO
-         ! Already performed during the first call above if canon_ortho = .true.
-         IF (rtp_control%propagator == do_em) CALL calc_SinvH(rtp, matrix_ks, matrix_ks_im, rtp_control, ortho=.TRUE.)
-         ihist = MOD(rtp%istep, rtp_control%aspc_order) + 1
-         CALL put_data_to_history(rtp, rho=rho_new, mos=mos_new, ihist=ihist, ortho=.TRUE.)
       END IF
 
       rtp%energy_new = energy%total
@@ -420,14 +357,12 @@ CONTAINS
 !> \brief computes the propagator matrix for EM/ETRS, RTP/EMD
 !> \param rtp ...
 !> \param propagator ...
-!> \param ortho ...
 !> \author Florian Schiffmann (02.09)
 ! **************************************************************************************************
 
-   SUBROUTINE compute_propagator_matrix(rtp, propagator, ortho)
+   SUBROUTINE compute_propagator_matrix(rtp, propagator)
       TYPE(rt_prop_type), POINTER                        :: rtp
-      INTEGER                                            :: propagator
-      LOGICAL                                            :: ortho
+      INTEGER, INTENT(IN)                                :: propagator
 
       CHARACTER(len=*), PARAMETER :: routineN = 'compute_propagator_matrix'
 
@@ -438,28 +373,17 @@ CONTAINS
       CALL timeset(routineN, handle)
 
       NULLIFY (exp_H_new, exp_H_old, propagator_matrix)
-      IF (.NOT. ortho) THEN
-         CALL get_rtp(rtp=rtp, exp_H_new=exp_H_new, exp_H_old=exp_H_old, &
-                      propagator_matrix=propagator_matrix, dt=dt)
-      ELSE
-         CALL get_rtp(rtp, exp_H_canon_new=exp_H_new, exp_H_canon_old=exp_H_old, &
-                      propagator_matrix_canon=propagator_matrix, dt=dt)
-      END IF
+
+      CALL get_rtp(rtp=rtp, exp_H_new=exp_H_new, exp_H_old=exp_H_old, &
+                   propagator_matrix=propagator_matrix, dt=dt)
 
       prefac = -0.5_dp*dt
-      ! IF (ortho) THEN
-      ! CALL dbcsr_print(exp_H_new(2)%matrix, matlab_format=.TRUE.)
-      ! CALL dbcsr_print(exp_H_old(2)%matrix, matlab_format=.TRUE.)
-      ! END IF
+
       DO i = 1, SIZE(exp_H_new)
          CALL dbcsr_add(propagator_matrix(i)%matrix, exp_H_new(i)%matrix, 0.0_dp, prefac)
          IF (propagator == do_em) &
             CALL dbcsr_add(propagator_matrix(i)%matrix, exp_H_old(i)%matrix, 1.0_dp, prefac)
       END DO
-
-      ! IF (ortho) THEN
-      ! CALL dbcsr_print(propagator_matrix(2)%matrix, matlab_format=.TRUE.)
-      ! END IF
 
       CALL timestop(handle)
 
@@ -471,28 +395,27 @@ CONTAINS
 !> \param matrix_ks ...
 !> \param matrix_ks_im ...
 !> \param rtp_control ...
-!> \param ortho ...
 !> \author Florian Schiffmann (02.09)
 ! **************************************************************************************************
 
-   SUBROUTINE calc_SinvH(rtp, matrix_ks, matrix_ks_im, rtp_control, ortho)
+   SUBROUTINE calc_SinvH(rtp, matrix_ks, matrix_ks_im, rtp_control)
       TYPE(rt_prop_type), POINTER                        :: rtp
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_ks, matrix_ks_im
-      TYPE(rtp_control_type), POINTER                    :: rtp_control
-      LOGICAL, INTENT(IN)                                :: ortho
+      TYPE(dbcsr_p_type), DIMENSION(:), INTENT(IN), &
+         POINTER                                         :: matrix_ks, matrix_ks_im
+      TYPE(rtp_control_type), INTENT(IN), POINTER        :: rtp_control
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'calc_SinvH'
       REAL(KIND=dp), PARAMETER                           :: one = 1.0_dp, zero = 0.0_dp
 
       INTEGER                                            :: handle, im, ispin, re
       REAL(dp)                                           :: t
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: exp_H, exp_H_canon, SinvB, SinvH
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: exp_H, H_canon, SinvB, SinvH
       TYPE(dbcsr_type)                                   :: matrix_ks_nosym
       TYPE(dbcsr_type), POINTER                          :: B_mat, S_inv, S_minus_half
 
       CALL timeset(routineN, handle)
       CALL get_rtp(rtp=rtp, S_inv=S_inv, S_minus_half=S_minus_half, exp_H_new=exp_H, dt=t)
-      IF (.NOT. ortho) THEN
+      IF (.NOT. rtp_control%canonical_ortho) THEN
          CALL dbcsr_create(matrix_ks_nosym, template=matrix_ks(1)%matrix, matrix_type="N")
          DO ispin = 1, SIZE(matrix_ks)
             re = ispin*2 - 1
@@ -543,21 +466,16 @@ CONTAINS
          END IF
          CALL dbcsr_release(matrix_ks_nosym)
       ELSE ! S = identity
-         NULLIFY (exp_H_canon)
-         CALL get_rtp(rtp, exp_H_canon_new=exp_H_canon)
+         NULLIFY (H_canon)
+         CALL get_rtp(rtp, H_canon=H_canon)
          ! construct the exponent in orthogonal basis (= i*X**T H X)
-         CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, matrix_ks, &
-                                          rtp%canon_ortho%H_canon, .FALSE.)
-         DO ispin = 1, SIZE(matrix_ks)
+         CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, matrix_ks, H_canon, density=.FALSE.)
+         DO ispin = 1, SIZE(H_canon)
             re = ispin*2 - 1
             im = ispin*2
-            CALL dbcsr_copy(exp_H_canon(im)%matrix, rtp%canon_ortho%H_canon(ispin)%matrix)
-         END DO
-         !set real part to zero
-         DO ispin = 1, SIZE(exp_H_canon)/2
-            re = ispin*2 - 1
-            im = ispin*2
-            CALL dbcsr_set(exp_H_canon(re)%matrix, zero)
+            CALL dbcsr_copy(exp_H(im)%matrix, H_canon(ispin)%matrix)
+            ! set real part to zero, matrix_ks_im missing so far, i. e. no do_hfx in CO basis
+            CALL dbcsr_set(exp_H(re)%matrix, zero)
          END DO
       END IF
 
@@ -765,15 +683,16 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief ...
 !> \param rtp ...
+!> \param rtp_control ...
 !> \param matrix_s ...
 !> \param aspc_order ...
-!> \param ortho ...
 ! **************************************************************************************************
-   SUBROUTINE aspc_extrapolate(rtp, matrix_s, aspc_order, ortho)
+   SUBROUTINE aspc_extrapolate(rtp, rtp_control, matrix_s, aspc_order)
       TYPE(rt_prop_type), POINTER                        :: rtp
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
-      INTEGER, INTENT(in)                                :: aspc_order
-      LOGICAL                                            :: ortho
+      TYPE(rtp_control_type), INTENT(IN), POINTER        :: rtp_control
+      TYPE(dbcsr_p_type), DIMENSION(:), INTENT(IN), &
+         POINTER                                         :: matrix_s
+      INTEGER, INTENT(IN)                                :: aspc_order
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'aspc_extrapolate'
       COMPLEX(KIND=dp), PARAMETER                        :: cone = (1.0_dp, 0.0_dp), &
@@ -800,11 +719,7 @@ CONTAINS
       IF (rtp%linear_scaling) THEN
          CALL get_rtp(rtp=rtp, rho_new=rho_new)
       ELSE
-         IF (.NOT. ortho) THEN
-            CALL get_rtp(rtp=rtp, mos_new=mos_new)
-         ELSE
-            CALL get_rtp(rtp=rtp, mos_ortho_new=mos_new)
-         END IF
+         CALL get_rtp(rtp=rtp, mos_new=mos_new)
       END IF
 
       naspc = MIN(rtp%istep, aspc_order)
@@ -825,11 +740,7 @@ CONTAINS
          END DO
       ELSE
          NULLIFY (mo_hist)
-         IF (.NOT. ortho) THEN
-            mo_hist => rtp%history%mo_history
-         ELSE
-            mo_hist => rtp%history_ortho%mo_history
-         END IF
+         mo_hist => rtp%history%mo_history
          nmat = SIZE(mos_new)
          DO imat = 1, nmat
             DO iaspc = 1, naspc
@@ -883,7 +794,7 @@ CONTAINS
                fm_tmp%local_data(:, icol_local + ncol_local) = mos_new(2*i)%matrix%local_data(:, icol_local)
             END DO
 
-            IF (.NOT. ortho) THEN
+            IF (.NOT. rtp_control%canonical_ortho) THEN
                CALL cp_dbcsr_sm_fm_multiply(matrix_s(1)%matrix, fm_tmp, fm_tmp1, kdbl)
             ELSE ! S = identity
                CALL cp_fm_to_fm(fm_tmp, fm_tmp1)
@@ -925,49 +836,35 @@ CONTAINS
 !> \param rho ...
 !> \param s_mat ...
 !> \param ihist ...
-!> \param ortho ...
 ! **************************************************************************************************
-   SUBROUTINE put_data_to_history(rtp, mos, rho, s_mat, ihist, ortho)
+   SUBROUTINE put_data_to_history(rtp, mos, rho, s_mat, ihist)
       TYPE(rt_prop_type), POINTER                        :: rtp
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: rho
-      TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
-         POINTER                                         :: s_mat
-      INTEGER                                            :: ihist
-      LOGICAL, INTENT(IN)                                :: ortho
+      TYPE(cp_fm_p_type), DIMENSION(:), INTENT(IN), &
+         POINTER                                         :: mos
+      TYPE(dbcsr_p_type), DIMENSION(:), INTENT(IN), &
+         POINTER                                         :: rho
+      TYPE(dbcsr_p_type), DIMENSION(:), INTENT(IN), &
+         OPTIONAL, POINTER                               :: s_mat
+      INTEGER, INTENT(IN)                                :: ihist
 
       INTEGER                                            :: i
 
-      IF (.NOT. ortho) THEN
-         IF (rtp%linear_scaling) THEN
-            DO i = 1, SIZE(rho)
-               CALL dbcsr_copy(rtp%history%rho_history(i, ihist)%matrix, rho(i)%matrix)
-            END DO
-         ELSE
-            DO i = 1, SIZE(mos)
-               CALL cp_fm_to_fm(mos(i)%matrix, rtp%history%mo_history(i, ihist)%matrix)
-            END DO
-            IF (PRESENT(s_mat)) THEN
-               IF (ASSOCIATED(rtp%history%s_history(ihist)%matrix)) THEN ! the sparsity might be different
-                  ! (future struct:check)
-                  CALL dbcsr_deallocate_matrix(rtp%history%s_history(ihist)%matrix)
-               END IF
-               ALLOCATE (rtp%history%s_history(ihist)%matrix)
-               CALL dbcsr_copy(rtp%history%s_history(ihist)%matrix, s_mat(1)%matrix)
-            END IF
-         END IF
+      IF (rtp%linear_scaling) THEN
+         DO i = 1, SIZE(rho)
+            CALL dbcsr_copy(rtp%history%rho_history(i, ihist)%matrix, rho(i)%matrix)
+         END DO
       ELSE
          DO i = 1, SIZE(mos)
-            CALL cp_fm_to_fm(mos(i)%matrix, rtp%history_ortho%mo_history(i, ihist)%matrix)
+            CALL cp_fm_to_fm(mos(i)%matrix, rtp%history%mo_history(i, ihist)%matrix)
          END DO
-         ! IF (PRESENT(s_mat)) THEN
-         !    IF (ASSOCIATED(rtp%history%s_history(ihist)%matrix)) THEN ! the sparsity might be different
-         !       ! (future struct:check)
-         !       CALL dbcsr_deallocate_matrix(rtp%history%s_history(ihist)%matrix)
-         !    END IF
-         !    ALLOCATE (rtp%history%s_history(ihist)%matrix)
-         !    CALL dbcsr_copy(rtp%history%s_history(ihist)%matrix, s_mat(1)%matrix)
-         ! END IF
+         IF (PRESENT(s_mat)) THEN
+            IF (ASSOCIATED(rtp%history%s_history(ihist)%matrix)) THEN ! the sparsity might be different
+               ! (future struct:check)
+               CALL dbcsr_deallocate_matrix(rtp%history%s_history(ihist)%matrix)
+            END IF
+            ALLOCATE (rtp%history%s_history(ihist)%matrix)
+            CALL dbcsr_copy(rtp%history%s_history(ihist)%matrix, s_mat(1)%matrix)
+         END IF
       END IF
 
    END SUBROUTINE put_data_to_history

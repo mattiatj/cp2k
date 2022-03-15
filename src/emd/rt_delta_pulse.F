@@ -90,15 +90,13 @@ CONTAINS
 !> \param qs_env ...
 !> \param mos_old ...
 !> \param mos_new ...
-!> \param ortho ...
 !> \author Joost & Martin (2011)
 ! **************************************************************************************************
 
-   SUBROUTINE apply_delta_pulse_periodic(qs_env, mos_old, mos_new, ortho)
+   SUBROUTINE apply_delta_pulse_periodic(qs_env, mos_old, mos_new)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(cp_fm_p_type), DIMENSION(:), INTENT(OUT), &
          POINTER                                         :: mos_old, mos_new
-      LOGICAL, INTENT(IN)                                :: ortho
 
       CHARACTER(len=*), PARAMETER :: routineN = 'apply_delta_pulse_periodic'
 
@@ -207,7 +205,7 @@ CONTAINS
       ! create work matrices
       CALL dbcsr_get_info(matrix_s(1)%matrix, nfullrows_total=nao)
       NULLIFY (fm_struct)
-      IF (.NOT. ortho) THEN
+      IF (.NOT. rtp_control%canonical_ortho) THEN
          fm_struct => rtp%ao_ao_fmstruct
       ELSE
          fm_struct => rtp%canon_ortho%oo_oo_fmstruct
@@ -314,7 +312,7 @@ CONTAINS
                                              rtp%canon_ortho%H_canon(ispin)%matrix, density=.FALSE.)
 
             ! diagonalize
-            CALL canon_ortho_dbcsr_to_fm_reduced(qs_env, rtp%canon_ortho%H_canon(ispin)%matrix, mat_ks)
+            CALL canon_ortho_dbcsr_to_fm_reduced(rtp, rtp_control, rtp%canon_ortho%H_canon(ispin)%matrix, mat_ks)
             CALL choose_eigv_solver(mat_ks, eigenvectors, eigenvalues)
 
             ! virtuals
@@ -348,7 +346,7 @@ CONTAINS
                   END IF
                   ! transform to CO basis
                   CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, dbcsr_tmp, dbcsr_tmp2, density=.FALSE.)
-                  CALL canon_ortho_dbcsr_to_fm_reduced(qs_env, dbcsr_tmp2, S_chol)
+                  CALL canon_ortho_dbcsr_to_fm_reduced(rtp, rtp_control, dbcsr_tmp2, S_chol)
                   ! apply to MOs
                   CALL parallel_gemm("N", "N", noo, nmo, noo, 1.0_dp, S_chol, mos_old(re)%matrix, 0.0_dp, mos_old(im)%matrix)
                   CALL cp_fm_scale_and_add(1.0_dp, mos_new(re)%matrix, factor, mos_old(im)%matrix)
@@ -399,15 +397,13 @@ CONTAINS
 !> \param qs_env ...
 !> \param mos_old ...
 !> \param mos_new ...
-!> \param ortho ...
 !> \author Joost & Martin (2011)
 ! **************************************************************************************************
 
-   SUBROUTINE apply_delta_pulse(qs_env, mos_old, mos_new, ortho)
+   SUBROUTINE apply_delta_pulse(qs_env, mos_old, mos_new)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(cp_fm_p_type), DIMENSION(:), INTENT(OUT), &
          POINTER                                         :: mos_old, mos_new
-      LOGICAL, INTENT(IN)                                :: ortho
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'apply_delta_pulse'
 
@@ -448,7 +444,7 @@ CONTAINS
       CALL build_berry_moment_matrix(qs_env, cosmat, sinmat, kvec)
 
       NULLIFY (S_inv_fm, tmp, cosmat_co, sinmat_co, cosmat_fm, sinmat_fm)
-      IF (.NOT. ortho) THEN
+      IF (.NOT. rtp_control%canonical_ortho) THEN
          ! invert overlap
          CALL cp_fm_create(S_inv_fm, matrix_struct=rtp%ao_ao_fmstruct, name="S_inv_fm")
          CALL cp_fm_create(tmp, matrix_struct=rtp%ao_ao_fmstruct, name="tmp_mat")
@@ -487,8 +483,8 @@ CONTAINS
          ! reduce matrix dimensions and get fm matrices
          CALL cp_fm_create(cosmat_fm, matrix_struct=rtp%canon_ortho%oo_oo_fmstruct, name="cosmat_fm")
          CALL cp_fm_create(sinmat_fm, matrix_struct=rtp%canon_ortho%oo_oo_fmstruct, name="sinmat_fm")
-         CALL canon_ortho_dbcsr_to_fm_reduced(qs_env, cosmat_co, cosmat_fm)
-         CALL canon_ortho_dbcsr_to_fm_reduced(qs_env, sinmat_co, sinmat_fm)
+         CALL canon_ortho_dbcsr_to_fm_reduced(rtp, rtp_control, cosmat_co, cosmat_fm)
+         CALL canon_ortho_dbcsr_to_fm_reduced(rtp, rtp_control, sinmat_co, sinmat_fm)
 
          CALL dbcsr_deallocate_matrix(cosmat_co)
          CALL dbcsr_deallocate_matrix(sinmat_co)
@@ -499,7 +495,7 @@ CONTAINS
             CALL transform_to_co_coeffs(qs_env, mos(ispin)%mo_set%mo_coeff, mos_new(re)%matrix)
             CALL cp_fm_set_all(mos_new(im)%matrix, 0.0_dp)
          END DO
-         CALL orthonormalize_complex_mos(qs_env, mos_new, orthogonal_basis=.TRUE.)
+         ! CALL orthonormalize_complex_mos(qs_env, mos_new, orthogonal_basis = .TRUE.)
 
          ! apply to mo coefficients
          DO ispin = 1, SIZE(mos)

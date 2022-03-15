@@ -2214,6 +2214,7 @@ CONTAINS
                                 i_val=dft_control%rtp_control%sc_check_start)
       CALL section_vals_val_get(rtp_section, "CANONICAL_ORTHO", &
                                 l_val=dft_control%rtp_control%canonical_ortho)
+      dft_control%rtp_control%nlindep = 0
 
    END SUBROUTINE read_rtp_section
 

@@ -127,12 +127,11 @@ CONTAINS
 !> \param run_type ...
 !> \param delta_iter ...
 !> \param used_time ...
-!> \param delta_iter_ortho ...
 ! **************************************************************************************************
-   SUBROUTINE rt_prop_output(qs_env, run_type, delta_iter, used_time, delta_iter_ortho)
+   SUBROUTINE rt_prop_output(qs_env, run_type, delta_iter, used_time)
       TYPE(qs_environment_type), POINTER                 :: qs_env
-      INTEGER, INTENT(in)                                :: run_type
-      REAL(dp), INTENT(in), OPTIONAL                     :: delta_iter, used_time, delta_iter_ortho
+      INTEGER, INTENT(IN)                                :: run_type
+      REAL(dp), INTENT(IN), OPTIONAL                     :: delta_iter, used_time
 
       INTEGER                                            :: n_electrons, nspin, output_unit, spin
       REAL(dp)                                           :: orthonormality, tot_rho_r
@@ -146,9 +145,10 @@ CONTAINS
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(rt_prop_type), POINTER                        :: rtp
+      TYPE(rtp_control_type), POINTER                    :: rtp_control
       TYPE(section_vals_type), POINTER                   :: dft_section, input, rtp_section
 
-      NULLIFY (logger, dft_control)
+      NULLIFY (logger, dft_control, rtp_control, matrix_s, input, rho, particle_set, atomic_kind_set, qs_kind_set)
 
       logger => cp_get_default_logger()
       CALL get_qs_env(qs_env, &
@@ -161,6 +161,7 @@ CONTAINS
                       qs_kind_set=qs_kind_set, &
                       dft_control=dft_control)
 
+      rtp_control => dft_control%rtp_control
       rtp_section => section_vals_get_subs_vals(input, "DFT%REAL_TIME_PROPAGATION")
 
       CALL get_qs_kind_set(qs_kind_set, nelectron=n_electrons)
@@ -192,9 +193,6 @@ CONTAINS
          IF (PRESENT(delta_iter)) &
             WRITE (UNIT=output_unit, FMT="((T3,A,T61,E20.6))") &
             "Convergence:", delta_iter
-         IF (PRESENT(delta_iter_ortho)) &
-            WRITE (UNIT=output_unit, FMT="((T3,A,T61,E20.6))") &
-            "Convergence in ortho basis:", delta_iter_ortho
          IF (rtp%converged) THEN
             IF (run_type == real_time_propagation) &
                WRITE (UNIT=output_unit, FMT="((T3,A,T61,F12.2))") &
@@ -208,19 +206,10 @@ CONTAINS
          IF (.NOT. rtp%linear_scaling) THEN
             CALL get_rtp(rtp=rtp, mos_new=mos_new)
             CALL rt_calculate_orthonormality(orthonormality, &
-                                             mos_new, matrix_s(1)%matrix, ortho=.FALSE.)
+                                             mos_new, matrix_s(1)%matrix, ortho=rtp_control%canonical_ortho)
             IF (output_unit > 0) &
                WRITE (output_unit, FMT="(/,(T3,A,T60,F20.10))") &
                "Max deviation from orthonormalization:", orthonormality
-         END IF
-         IF (dft_control%rtp_control%canonical_ortho) THEN
-            NULLIFY (mos_new)
-            CALL get_rtp(rtp=rtp, mos_ortho_new=mos_new)
-            CALL rt_calculate_orthonormality(orthonormality, &
-                                             mos_new, matrix_s(1)%matrix, ortho=.TRUE.)
-            IF (output_unit > 0) &
-               WRITE (output_unit, FMT="(/,(T3,A,T60,F20.10))") &
-               "Max deviation from orthonormalization in ortho basis:", orthonormality
          END IF
       END IF
 
@@ -372,20 +361,20 @@ CONTAINS
 ! **************************************************************************************************
 !> \brief computes the convergence criterion for RTP and EMD
 !> \param rtp ...
+!> \param rtp_control ...
 !> \param matrix_s Overlap matrix without the derivatives
 !> \param delta_mos ...
 !> \param delta_eps ...
-!> \param ortho ...
 !> \author Florian Schiffmann (02.09)
 ! **************************************************************************************************
 
-   SUBROUTINE rt_convergence(rtp, matrix_s, delta_mos, delta_eps, ortho)
+   SUBROUTINE rt_convergence(rtp, rtp_control, matrix_s, delta_mos, delta_eps)
 
       TYPE(rt_prop_type), POINTER                        :: rtp
+      TYPE(rtp_control_type), INTENT(IN), POINTER        :: rtp_control
       TYPE(dbcsr_type), POINTER                          :: matrix_s
       TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: delta_mos
       REAL(dp), INTENT(out)                              :: delta_eps
-      LOGICAL, INTENT(IN)                                :: ortho
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'rt_convergence'
       REAL(KIND=dp), PARAMETER                           :: one = 1.0_dp, zero = 0.0_dp
@@ -403,11 +392,7 @@ CONTAINS
       CALL timeset(routineN, handle)
 
       NULLIFY (mos_new, newstruct, newstruct1, tmp_fm_struct, work, work1, work2)
-      IF (.NOT. ortho) THEN
-         CALL get_rtp(rtp=rtp, mos_new=mos_new)
-      ELSE
-         CALL get_rtp(rtp=rtp, mos_ortho_new=mos_new)
-      END IF
+      CALL get_rtp(rtp=rtp, mos_new=mos_new)
 
       nspin = SIZE(delta_mos)/2
       max_alpha = 0.0_dp
@@ -442,7 +427,7 @@ CONTAINS
             work%local_data(:, icol + lcol) = delta_mos(im)%matrix%local_data(:, icol)
          END DO
 
-         IF (.NOT. ortho) THEN
+         IF (.NOT. rtp_control%canonical_ortho) THEN
             CALL cp_dbcsr_sm_fm_multiply(matrix_s, work, work1, ncol=newdim)
          ELSE ! S = identity
             CALL cp_fm_to_fm(work, work1)
@@ -944,7 +929,7 @@ CONTAINS
                            matrix_type=dbcsr_type_no_symmetry)
          CALL dbcsr_set(moments_co(i)%matrix, 0.0_dp)
       END DO
-      CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, moments_ao, moments_co, .FALSE.)
+      CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, moments_ao, moments_co, density=.FALSE.)
       CALL dbcsr_deallocate_matrix_set(moments_ao)
 
       ! calculate expectation value

@@ -27,7 +27,6 @@ MODULE rt_propagator_init
                                               cp_fm_release,&
                                               cp_fm_set_all,&
                                               cp_fm_to_fm,&
-                                              cp_fm_to_fm_submat,&
                                               cp_fm_type
    USE cp_fm_vect,                      ONLY: cp_fm_vect_dealloc
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
@@ -58,6 +57,8 @@ MODULE rt_propagator_init
                                               s_matrices_create
    USE rt_propagation_types,            ONLY: get_rtp,&
                                               rt_prop_type
+   USE rt_propagation_utils,            ONLY: canon_ortho_dbcsr_to_fm_reduced,&
+                                              canon_ortho_fm_reduced_to_dbcsr
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -81,21 +82,20 @@ CONTAINS
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
 
-      INTEGER                                            :: i, imat, nao, ndep, unit_nr
+      INTEGER                                            :: i, imat, unit_nr
       REAL(KIND=dp)                                      :: dt, prefac
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER :: mos_new, mos_next, mos_old, mos_ortho_old, &
-         propagator_fm, propagator_fm_red, propagator_matrix_fm, propagator_matrix_fm_red
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_new, mos_next, mos_old, &
+                                                            propagator_fm, propagator_matrix_fm
       TYPE(cp_logger_type), POINTER                      :: logger
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER :: exp_H_canon_new, exp_H_canon_old, exp_H_new, &
-         exp_H_old, matrix_ks, matrix_ks_im, propagator_matrix, propagator_matrix_canon, rho_old, &
-         s_mat
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: exp_H_new, exp_H_old, matrix_ks, &
+                                                            matrix_ks_im, propagator_matrix, &
+                                                            rho_old, s_mat
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(rtp_control_type), POINTER                    :: rtp_control
 
       NULLIFY (rtp, dft_control, s_mat, matrix_ks, matrix_ks_im, rtp_control)
-      NULLIFY (exp_H_old, exp_H_new, exp_H_canon_old, exp_H_canon_new, propagator_matrix, propagator_matrix_canon)
-      NULLIFY (rho_old, mos_new, mos_next, mos_old, mos_ortho_old)
+      NULLIFY (rho_old, mos_new, mos_next, mos_old)
 
       CALL get_qs_env(qs_env, &
                       rtp=rtp, &
@@ -105,21 +105,16 @@ CONTAINS
                       matrix_ks_im=matrix_ks_im)
 
       rtp_control => dft_control%rtp_control
+      CALL s_matrices_create(s_mat, rtp)
+      CALL calc_SinvH(rtp, matrix_ks, matrix_ks_im, rtp_control)
+
+      NULLIFY (exp_H_old, exp_H_new, propagator_matrix)
       CALL get_rtp(rtp=rtp, exp_H_old=exp_H_old, exp_H_new=exp_H_new, &
                    propagator_matrix=propagator_matrix, dt=dt)
-      CALL s_matrices_create(s_mat, rtp)
-      CALL calc_SinvH(rtp, matrix_ks, matrix_ks_im, rtp_control, ortho=.FALSE.)
-      IF (rtp_control%canonical_ortho) CALL calc_SinvH(rtp, matrix_ks, matrix_ks_im, rtp_control, ortho=.TRUE.)
       DO i = 1, SIZE(exp_H_old)
          CALL dbcsr_copy(exp_H_old(i)%matrix, exp_H_new(i)%matrix)
       END DO
-      IF (rtp_control%canonical_ortho) THEN
-         NULLIFY (exp_H_canon_new, exp_H_canon_old)
-         CALL get_rtp(rtp, exp_H_canon_new=exp_H_canon_new, exp_H_canon_old=exp_H_canon_old)
-         DO i = 1, SIZE(exp_H_canon_old)
-            CALL dbcsr_copy(exp_H_canon_old(i)%matrix, exp_H_canon_new(i)%matrix)
-         END DO
-      END IF
+
       ! use the fact that CN propagator is a first order pade approximation on the EM propagator
       IF (rtp_control%propagator == do_cn) THEN
          rtp%orders(1, :) = 0; rtp%orders(2, :) = 1; rtp_control%mat_exp = do_pade; rtp_control%propagator = do_em
@@ -127,6 +122,7 @@ CONTAINS
          IF (rtp%linear_scaling) THEN
             CALL get_maxabs_eigval_sparse(rtp, s_mat, matrix_ks, rtp_control)
          ELSE
+            ! for canonically orthogonalized basis assume that this estimate is fine
             CALL get_maxabs_eigval(rtp, s_mat, matrix_ks, rtp_control)
          END IF
       END IF
@@ -151,14 +147,6 @@ CONTAINS
          CALL dbcsr_copy(propagator_matrix(imat)%matrix, exp_H_new(imat)%matrix)
          CALL dbcsr_scale(propagator_matrix(imat)%matrix, prefac)
       END DO
-      IF (rtp_control%canonical_ortho) THEN
-         NULLIFY (propagator_matrix_canon)
-         CALL get_rtp(rtp, propagator_matrix_canon=propagator_matrix_canon)
-         DO i = 1, SIZE(exp_H_canon_new)
-            CALL dbcsr_copy(propagator_matrix_canon(i)%matrix, exp_H_canon_new(i)%matrix)
-            CALL dbcsr_scale(propagator_matrix_canon(i)%matrix, prefac)
-         END DO
-      END IF
 
       ! For ETRS this bit could be avoided but it drastically simplifies the workflow afterwards.
       ! If we compute the half propagated mos/exponential already here, we ensure everything is done
@@ -167,19 +155,11 @@ CONTAINS
       IF (rtp_control%propagator == do_etrs) THEN
          IF (rtp_control%mat_exp == do_arnoldi) THEN
             rtp%iter = 0
-            CALL propagate_arnoldi(rtp, rtp_control, .FALSE.)
-            IF (rtp_control%canonical_ortho) CALL propagate_arnoldi(rtp, rtp_control, .TRUE.)
+            CALL propagate_arnoldi(rtp, rtp_control)
             CALL get_rtp(rtp=rtp, mos_new=mos_new, mos_next=mos_next)
             DO imat = 1, SIZE(mos_new)
                CALL cp_fm_to_fm(mos_new(imat)%matrix, mos_next(imat)%matrix)
             END DO
-            IF (rtp_control%canonical_ortho) THEN
-               NULLIFY (mos_new, mos_next)
-               CALL get_rtp(rtp=rtp, mos_ortho_new=mos_new, mos_ortho_next=mos_next)
-               DO imat = 1, SIZE(mos_new)
-                  CALL cp_fm_to_fm(mos_new(imat)%matrix, mos_next(imat)%matrix)
-               END DO
-            END IF
          ELSEIF (rtp_control%mat_exp == do_bch) THEN
          ELSE
             IF (rtp%linear_scaling) THEN
@@ -189,62 +169,50 @@ CONTAINS
                NULLIFY (propagator_fm, propagator_matrix_fm)
                ALLOCATE (propagator_fm(SIZE(exp_H_new)))
                ALLOCATE (propagator_matrix_fm(SIZE(propagator_matrix)))
-               DO i = 1, SIZE(exp_H_new)
-                  CALL cp_fm_create(propagator_fm(i)%matrix, &
-                                    matrix_struct=rtp%ao_ao_fmstruct, &
-                                    name="prop_fm")
-                  CALL copy_dbcsr_to_fm(exp_H_new(i)%matrix, propagator_fm(i)%matrix)
-                  CALL cp_fm_create(propagator_matrix_fm(i)%matrix, &
-                                    matrix_struct=rtp%ao_ao_fmstruct, &
-                                    name="prop_mat_fm")
-                  CALL copy_dbcsr_to_fm(propagator_matrix(i)%matrix, propagator_matrix_fm(i)%matrix)
-               END DO
-
-               ! need to reduce dimension of propagator_matrix_fm if linear dependencies in S were removed
-               NULLIFY (propagator_fm_red, propagator_matrix_fm_red)
-               IF (rtp_control%canonical_ortho) THEN
-                  ALLOCATE (propagator_fm_red(SIZE(propagator_fm)))
-                  ALLOCATE (propagator_matrix_fm_red(SIZE(propagator_matrix_fm)))
-                  ndep = rtp_control%nlindep
-                  CALL cp_fm_get_info(propagator_fm(1)%matrix, nrow_global=nao)
+               IF (.NOT. rtp_control%canonical_ortho) THEN
+                  DO i = 1, SIZE(exp_H_new)
+                     CALL cp_fm_create(propagator_fm(i)%matrix, &
+                                       matrix_struct=rtp%ao_ao_fmstruct, &
+                                       name="prop_fm")
+                     CALL copy_dbcsr_to_fm(exp_H_new(i)%matrix, propagator_fm(i)%matrix)
+                     CALL cp_fm_create(propagator_matrix_fm(i)%matrix, &
+                                       matrix_struct=rtp%ao_ao_fmstruct, &
+                                       name="prop_mat_fm")
+                     CALL copy_dbcsr_to_fm(propagator_matrix(i)%matrix, propagator_matrix_fm(i)%matrix)
+                  END DO
+               ELSE
+                  ! need to reduce dimension of propagator_matrix_fm if linear dependencies in S were removed
                   DO i = 1, SIZE(propagator_fm)
-                     CALL cp_fm_create(propagator_fm_red(i)%matrix, &
+                     CALL cp_fm_create(propagator_fm(i)%matrix, &
                                        matrix_struct=rtp%canon_ortho%oo_oo_fmstruct, &
                                        name="prop fm red")
-                     CALL cp_fm_to_fm_submat(propagator_fm(i)%matrix, propagator_fm_red(i)%matrix, &
-                                             nao - ndep, nao - ndep, 1, 1, 1, 1)
-                     CALL cp_fm_create(propagator_matrix_fm_red(i)%matrix, &
+                     CALL canon_ortho_dbcsr_to_fm_reduced(rtp, rtp_control, exp_H_new(i)%matrix, &
+                                                          propagator_fm(i)%matrix)
+                     CALL cp_fm_create(propagator_matrix_fm(i)%matrix, &
                                        matrix_struct=rtp%canon_ortho%oo_oo_fmstruct, &
                                        name="prop fm red")
-                     CALL cp_fm_to_fm_submat(propagator_matrix_fm(i)%matrix, propagator_matrix_fm_red(i)%matrix, &
-                                             nao - ndep, nao - ndep, 1, 1, 1, 1)
+                     CALL canon_ortho_dbcsr_to_fm_reduced(rtp, rtp_control, propagator_matrix(i)%matrix, &
+                                                          propagator_matrix_fm(i)%matrix)
                   END DO
                END IF
 
                ! compute exponentials
                CALL compute_exponential(propagator_fm, propagator_matrix_fm, rtp_control, rtp)
-               IF (rtp_control%canonical_ortho) THEN
-                  CALL compute_exponential(propagator_fm_red, propagator_matrix_fm_red, rtp_control, rtp)
 
-                  ! copy back to full dimensinal ao matrices in order to be compatible with dbcsr format
-                  ndep = rtp_control%nlindep
-                  CALL cp_fm_get_info(propagator_fm(1)%matrix, nrow_global=nao)
-                  DO i = 1, SIZE(propagator_fm)
-                     CALL cp_fm_set_all(propagator_fm(i)%matrix, 0.0_dp)
-                     CALL cp_fm_set_all(propagator_matrix_fm(i)%matrix, 0.0_dp)
-                     CALL cp_fm_to_fm_submat(propagator_fm_red(i)%matrix, propagator_fm(i)%matrix, &
-                                             nao - ndep, nao - ndep, 1, 1, 1, 1)
-                     CALL cp_fm_to_fm_submat(propagator_matrix_fm_red(i)%matrix, propagator_matrix_fm(i)%matrix, &
-                                             nao - ndep, nao - ndep, 1, 1, 1, 1)
-                  END DO
-                  CALL cp_fm_vect_dealloc(propagator_fm_red)
-                  CALL cp_fm_vect_dealloc(propagator_matrix_fm_red)
-               END IF
                ! copy back to dbcsr format
-               DO i = 1, SIZE(exp_H_new)
-                  CALL copy_fm_to_dbcsr(propagator_fm(i)%matrix, exp_H_new(i)%matrix)
-                  CALL copy_fm_to_dbcsr(propagator_matrix_fm(i)%matrix, propagator_matrix(i)%matrix)
-               END DO
+               IF (.NOT. rtp_control%canonical_ortho) THEN
+                  DO i = 1, SIZE(exp_H_new)
+                     CALL copy_fm_to_dbcsr(propagator_fm(i)%matrix, exp_H_new(i)%matrix)
+                     CALL copy_fm_to_dbcsr(propagator_matrix_fm(i)%matrix, propagator_matrix(i)%matrix)
+                  END DO
+               ELSE
+                  DO i = 1, SIZE(exp_H_new)
+                     CALL canon_ortho_fm_reduced_to_dbcsr(rtp, rtp_control, propagator_fm(i)%matrix, &
+                                                          exp_H_new(i)%matrix)
+                     CALL canon_ortho_fm_reduced_to_dbcsr(rtp, rtp_control, propagator_matrix_fm(i)%matrix, &
+                                                          propagator_matrix(i)%matrix)
+                  END DO
+               END IF
                CALL cp_fm_vect_dealloc(propagator_fm)
                CALL cp_fm_vect_dealloc(propagator_matrix_fm)
             END IF
@@ -258,13 +226,8 @@ CONTAINS
          CALL get_rtp(rtp=rtp, rho_old=rho_old)
       ELSE
          CALL get_rtp(rtp=rtp, mos_old=mos_old)
-         IF (rtp_control%canonical_ortho) THEN
-            CALL get_rtp(rtp, mos_ortho_old=mos_ortho_old)
-         END IF
       END IF
-      CALL put_data_to_history(rtp, mos=mos_old, s_mat=s_mat, ihist=1, rho=rho_old, ortho=.FALSE.)
-      IF (rtp_control%canonical_ortho) CALL put_data_to_history(rtp, mos=mos_ortho_old, s_mat=s_mat, &
-                                                                ihist=1, rho=rho_old, ortho=.TRUE.)
+      CALL put_data_to_history(rtp, mos=mos_old, s_mat=s_mat, ihist=1, rho=rho_old)
 
    END SUBROUTINE init_propagators
 

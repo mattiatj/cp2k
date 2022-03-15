@@ -82,7 +82,6 @@ MODULE rt_propagation
    USE rt_propagation_utils,            ONLY: calc_S_derivs,&
                                               calc_update_rho,&
                                               calc_update_rho_sparse,&
-                                              canon_ortho_matrix_ao_to_co,&
                                               get_restart_wfn,&
                                               rt_canon_ortho,&
                                               transform_to_co_coeffs
@@ -138,7 +137,7 @@ CONTAINS
       ! Initializes the extrapolation
       CALL get_qs_env(qs_env=qs_env, rtp=rtp, input=input)
       aspc_order = rtp_control%aspc_order
-      CALL rtp_history_create(rtp, rtp_control, aspc_order)
+      CALL rtp_history_create(rtp, aspc_order)
 
       ! Reads the simulation parameters from the input
       motion_section => section_vals_get_subs_vals(force_env%root_section, "MOTION")
@@ -165,9 +164,6 @@ CONTAINS
       IF (rtp_control%velocity_gauge) THEN
          rtp%do_hfx = .TRUE.
       END IF
-      NULLIFY (ls_scf_section)
-      ls_scf_section => section_vals_get_subs_vals(input, "DFT%REAL_TIME_PROPAGATION")
-      CALL section_vals_val_get(ls_scf_section, "SET_RHO_WITH_ORTHO", l_val=rtp%set_rho_with_ortho)
 
       ! Hmm, not really like to initialize with the structure of S but I reckon it is
       ! done everywhere like this
@@ -217,7 +213,7 @@ CONTAINS
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(rtp_control_type), POINTER                    :: rtp_control
 
-      NULLIFY (matrix_s, dft_control, rtp, rtp_control, mos, mos_old, mos_new, mos_ortho_old, mos_ortho_new)
+      NULLIFY (matrix_s, dft_control, rtp, rtp_control, mos, mos_old, mos_new)
       NULLIFY (matrix_ks, scf_env)
       CALL cite_reference(Andermatt2016)
 
@@ -232,23 +228,18 @@ CONTAINS
 
       periodic_cell = ANY(cell%perd > 0)
       IF (rtp_control%canonical_ortho) THEN
-         CALL rt_canon_ortho(qs_env, .TRUE.)
-         CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, matrix_ks, rtp%canon_ortho%H_canon, .FALSE.)
+         CALL rt_canon_ortho(qs_env, calc_trsfmatrices=.TRUE.)
       END IF
 
       IF (.NOT. rtp%linear_scaling) THEN
          CALL get_qs_env(qs_env, mos=mos)
          CALL get_rtp(rtp=rtp, mos_old=mos_old, mos_new=mos_new)
-         IF (rtp_control%canonical_ortho) CALL get_rtp(rtp=rtp, mos_ortho_old=mos_ortho_old, mos_ortho_new=mos_ortho_new)
          IF (rtp_control%initial_wfn == use_scf_wfn) THEN
             IF (rtp_control%apply_delta_pulse) THEN
                IF (dft_control%qs_control%dftb) &
                   CALL build_dftb_overlap(qs_env, 1, matrix_s)
                IF (rtp_control%periodic) THEN
-                  CALL apply_delta_pulse_periodic(qs_env, mos_old, mos_new, .FALSE.)
-                  IF (rtp_control%canonical_ortho) THEN
-                     CALL apply_delta_pulse_periodic(qs_env, mos_ortho_old, mos_ortho_new, .TRUE.)
-                  END IF
+                  CALL apply_delta_pulse_periodic(qs_env, mos_old, mos_new)
                ELSE
                   IF (periodic_cell) THEN
                      CPWARN("This application of the delta pulse is not compatible with PBC!")
@@ -265,17 +256,17 @@ CONTAINS
                CALL apply_delta_pulse_mag(qs_env, mos_old, mos_new)
             ELSE
                DO i = 1, SIZE(mos)
-                  CALL cp_fm_to_fm(mos(i)%mo_set%mo_coeff, mos_old(2*i - 1)%matrix)
+                  IF (.NOT. rtp_control%canonical_ortho) THEN
+                     CALL cp_fm_to_fm(mos(i)%mo_set%mo_coeff, mos_old(2*i - 1)%matrix)
+                  ELSE
+                     CALL transform_to_co_coeffs(qs_env, mos(i)%mo_set%mo_coeff, mos_old(2*i - 1)%matrix)
+                  END IF
                   CALL cp_fm_set_all(mos_old(2*i)%matrix, zero, zero)
                END DO
-               IF (rtp_control%canonical_ortho) THEN
-                  CALL transform_to_co_coeffs(qs_env, mos_old, mos_ortho_old)
-               END IF
             END IF
          END IF
          DO i = 1, SIZE(mos_old)
             CALL cp_fm_to_fm(mos_old(i)%matrix, mos_new(i)%matrix)
-            IF (rtp_control%canonical_ortho) CALL cp_fm_to_fm(mos_ortho_old(i)%matrix, mos_ortho_new(i)%matrix)
          END DO
          CALL calc_update_rho(qs_env)
       ELSE
@@ -326,8 +317,8 @@ CONTAINS
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'run_propagation'
 
-      INTEGER                                            :: aspc_order, handle, i_iter, i_step, &
-                                                            max_iter, max_steps, output_unit
+      INTEGER                                            :: handle, i_iter, i_step, max_iter, &
+                                                            max_steps, output_unit
       LOGICAL                                            :: should_stop
       REAL(Kind=dp)                                      :: eps_ener, time_iter_start, &
                                                             time_iter_stop, used_time
@@ -353,8 +344,6 @@ CONTAINS
       max_steps = MIN(rtp%nsteps, rtp%max_steps)
       max_iter = rtp_control%max_iter
       eps_ener = rtp_control%eps_ener
-
-      aspc_order = rtp_control%aspc_order
 
       rtp%energy_old = energy%total
       time_iter_start = m_walltime()
@@ -389,7 +378,7 @@ CONTAINS
          CALL external_e_potential(qs_env)
          CALL cp_iterate(logger%iter_info, last=(i_step == max_steps), iter_nr=i_step)
          rtp%converged = .FALSE.
-         rtp%converged_ortho = .FALSE.
+         ! rtp%converged_ortho = .FALSE.
          DO i_iter = 1, max_iter
             IF (i_step == rtp%i_start + 1 .AND. i_iter == 2 .AND. rtp_control%hfx_redistribute) &
                CALL qs_ks_did_change(qs_env%ks_env, s_mstruct_changed=.TRUE.)
@@ -398,11 +387,7 @@ CONTAINS
             CALL qs_ks_update_qs_env(qs_env, calculate_forces=.FALSE.)
             rtp%energy_new = energy%total
             IF (rtp%converged) EXIT
-            IF (.NOT. rtp_control%canonical_ortho) THEN
-               CALL rt_prop_output(qs_env, real_time_propagation, rtp%delta_iter)
-            ELSE
-               CALL rt_prop_output(qs_env, real_time_propagation, rtp%delta_iter, delta_iter_ortho=rtp%delta_iter_ortho)
-            END IF
+            CALL rt_prop_output(qs_env, real_time_propagation, rtp%delta_iter)
          END DO
          IF (rtp%converged) THEN
             CALL external_control(should_stop, "MD", globenv=globenv)
@@ -410,12 +395,7 @@ CONTAINS
             time_iter_stop = m_walltime()
             used_time = time_iter_stop - time_iter_start
             time_iter_start = time_iter_stop
-            IF (.NOT. rtp_control%canonical_ortho) THEN
-               CALL rt_prop_output(qs_env, real_time_propagation, delta_iter=rtp%delta_iter, used_time=used_time)
-            ELSE
-               CALL rt_prop_output(qs_env, real_time_propagation, delta_iter=rtp%delta_iter, used_time=used_time, &
-                                   delta_iter_ortho=rtp%delta_iter_ortho)
-            END IF
+            CALL rt_prop_output(qs_env, real_time_propagation, delta_iter=rtp%delta_iter, used_time=used_time)
             CALL rt_write_input_restart(force_env=force_env)
             IF (should_stop) EXIT
          ELSE
