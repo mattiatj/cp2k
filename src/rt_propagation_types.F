@@ -82,6 +82,8 @@ MODULE rt_propagation_types
       TYPE(dbcsr_type), POINTER                   :: work
       TYPE(dbcsr_p_type), POINTER, DIMENSION(:)   :: H_canon
       TYPE(dbcsr_p_type), POINTER, DIMENSION(:)   :: P_canon
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)   :: H_canon_im
+      TYPE(dbcsr_p_type), POINTER, DIMENSION(:)   :: P_canon_im
       TYPE(cp_fm_struct_type), POINTER            :: oo_oo_fmstruct
    END TYPE rtp_canon_ortho
 
@@ -302,6 +304,7 @@ CONTAINS
                CALL dbcsr_copy(rtp%canon_ortho%P_canon(i)%matrix, template)
                CALL dbcsr_set(rtp%canon_ortho%P_canon(i)%matrix, 0.0_dp)
             END DO
+            NULLIFY (rtp%canon_ortho%H_canon_im, rtp%canon_ortho%P_canon_im)
          END IF
       END IF
 
@@ -403,13 +406,15 @@ CONTAINS
 !> \param admm_mos ...
 !> \param P_canon ...
 !> \param H_canon ...
+!> \param P_canon_im ...
+!> \param H_canon_im ...
 !> \param work ...
 !> \param work_fm ...
 ! **************************************************************************************************
    SUBROUTINE get_rtp(rtp, exp_H_old, exp_H_new, H_last_iter, rho_old, rho_next, rho_new, mos, mos_new, mos_old, &
                       mos_next, xmatrix, ymatrix, xmatrix_dbcsr, ymatrix_dbcsr, S_inv, S_half, S_minus_half, B_mat, &
                       C_mat, propagator_matrix, mixing, mixing_factor, S_der, dt, nsteps, SinvH, SinvB, admm_mos, &
-                      P_canon, H_canon, work, work_fm)
+                      P_canon, H_canon, P_canon_im, H_canon_im, work, work_fm)
 
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
@@ -434,7 +439,7 @@ CONTAINS
       TYPE(cp_fm_p_type), DIMENSION(:), OPTIONAL, &
          POINTER                                         :: admm_mos
       TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
-         POINTER                                         :: P_canon, H_canon
+         POINTER                                         :: P_canon, H_canon, P_canon_im, H_canon_im
       TYPE(dbcsr_type), OPTIONAL, POINTER                :: work
       TYPE(cp_fm_type), OPTIONAL, POINTER                :: work_fm
 
@@ -461,6 +466,8 @@ CONTAINS
       IF (PRESENT(work)) work => rtp%canon_ortho%work
       IF (PRESENT(P_canon)) P_canon => rtp%canon_ortho%P_canon
       IF (PRESENT(H_canon)) H_canon => rtp%canon_ortho%H_canon
+      IF (PRESENT(P_canon_im)) P_canon_im => rtp%canon_ortho%P_canon_im
+      IF (PRESENT(H_canon_im)) H_canon_im => rtp%canon_ortho%H_canon_im
 
       IF (PRESENT(S_inv)) S_inv => rtp%S_inv
       IF (PRESENT(S_half)) S_half => rtp%S_half
@@ -526,6 +533,10 @@ CONTAINS
             CALL dbcsr_deallocate_matrix_set(rtp%canon_ortho%H_canon)
          IF (ASSOCIATED(rtp%canon_ortho%P_canon)) &
             CALL dbcsr_deallocate_matrix_set(rtp%canon_ortho%P_canon)
+         IF (ASSOCIATED(rtp%canon_ortho%H_canon_im)) &
+            CALL dbcsr_deallocate_matrix_set(rtp%canon_ortho%H_canon_im)
+         IF (ASSOCIATED(rtp%canon_ortho%P_canon_im)) &
+            CALL dbcsr_deallocate_matrix_set(rtp%canon_ortho%P_canon_im)
          IF (ASSOCIATED(rtp%canon_ortho%oo_oo_fmstruct)) &
             CALL cp_fm_struct_release(rtp%canon_ortho%oo_oo_fmstruct)
          DEALLOCATE (rtp%canon_ortho)

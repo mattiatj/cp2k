@@ -167,8 +167,9 @@ CONTAINS
 
       ! Hmm, not really like to initialize with the structure of S but I reckon it is
       ! done everywhere like this
-      IF (rtp%do_hfx .OR. rtp%track_imag_density) &
+      IF (rtp%do_hfx .OR. rtp%track_imag_density) THEN
          CALL rtp_hfx_rebuild(qs_env)
+      END IF
 
       CALL init_propagation_run(qs_env)
       IF (.NOT. rtp_control%fixed_ions) THEN

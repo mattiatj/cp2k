@@ -185,7 +185,6 @@ CONTAINS
 
       CALL get_rtp(rtp=rtp, H_last_iter=H_last_iter)
       IF (rtp%mixing) THEN
-         IF (rtp_control%canonical_ortho) CPABORT("no mixing in CO yet")
          IF (unit_nr > 0) THEN
             WRITE (unit_nr, '(t3,a,2f16.8)') "Mixing the Hamiltonians to improve robustness, mixing factor: ", rtp%mixing_factor
          END IF
@@ -211,9 +210,18 @@ CONTAINS
          DO i = 1, SIZE(matrix_ks)
             re = 2*i - 1
             im = 2*i
-            CALL dbcsr_copy(H_last_iter(re)%matrix, ks_mix(i)%matrix)
-            IF (rtp%do_hfx) THEN
-               CALL dbcsr_copy(H_last_iter(im)%matrix, ks_mix_im(i)%matrix)
+            IF (.NOT. rtp_control%canonical_ortho) THEN
+               CALL dbcsr_copy(H_last_iter(re)%matrix, ks_mix(i)%matrix)
+               IF (rtp%do_hfx) THEN
+                  CALL dbcsr_copy(H_last_iter(im)%matrix, ks_mix_im(i)%matrix)
+               END IF
+            ELSE
+               CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, ks_mix(i)%matrix, &
+                                                H_last_iter(re)%matrix, density=.FALSE.)
+               IF (rtp%do_hfx) THEN
+                  CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, ks_mix_im(i)%matrix, &
+                                                   H_last_iter(im)%matrix, density=.FALSE.)
+               END IF
             END IF
          END DO
          CALL dbcsr_deallocate_matrix_set(ks_mix)
@@ -231,6 +239,10 @@ CONTAINS
             ELSE
                CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, matrix_ks(i)%matrix, &
                                                 H_last_iter(re)%matrix, density=.FALSE.)
+               IF (rtp%do_hfx) THEN
+                  CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, matrix_ks_im(i)%matrix, &
+                                                   H_last_iter(im)%matrix, density=.FALSE.)
+               END IF
             END IF
          END DO
       END IF
@@ -409,7 +421,7 @@ CONTAINS
 
       INTEGER                                            :: handle, im, ispin, re
       REAL(dp)                                           :: t
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: exp_H, H_canon, SinvB, SinvH
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: exp_H, H_canon, H_canon_im, SinvB, SinvH
       TYPE(dbcsr_type)                                   :: matrix_ks_nosym
       TYPE(dbcsr_type), POINTER                          :: B_mat, S_inv, S_minus_half
 
@@ -467,15 +479,21 @@ CONTAINS
          CALL dbcsr_release(matrix_ks_nosym)
       ELSE ! S = identity
          NULLIFY (H_canon)
-         CALL get_rtp(rtp, H_canon=H_canon)
+         CALL get_rtp(rtp, H_canon=H_canon, H_canon_im=H_canon_im)
          ! construct the exponent in orthogonal basis (= i*X**T H X)
          CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, matrix_ks, H_canon, density=.FALSE.)
          DO ispin = 1, SIZE(H_canon)
             re = ispin*2 - 1
             im = ispin*2
             CALL dbcsr_copy(exp_H(im)%matrix, H_canon(ispin)%matrix)
-            ! set real part to zero, matrix_ks_im missing so far, i. e. no do_hfx in CO basis
-            CALL dbcsr_set(exp_H(re)%matrix, zero)
+            IF (.NOT. rtp%do_hfx) THEN
+               ! set real part to zero, matrix_ks_im is zero
+               CALL dbcsr_set(exp_H(re)%matrix, zero)
+            ELSE
+               CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, matrix_ks_im(ispin)%matrix, &
+                                                H_canon_im(ispin)%matrix, density=.FALSE.)
+               CALL dbcsr_copy(exp_H(re)%matrix, H_canon_im(ispin)%matrix)
+            END IF
          END DO
       END IF
 

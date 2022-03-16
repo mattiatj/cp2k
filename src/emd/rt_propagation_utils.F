@@ -102,7 +102,7 @@ MODULE rt_propagation_utils
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'rt_propagation_utils'
 
    INTERFACE canon_ortho_matrix_ao_to_co
-      MODULE PROCEDURE canon_ortho_matrix_ao_to_co_dbcsr_p, canon_ortho_matrix_ao_to_co_dbcsr
+      MODULE PROCEDURE canon_ortho_matrix_ao_to_co_p_type, canon_ortho_matrix_ao_to_co_type
    END INTERFACE
 
    INTERFACE transform_to_co_coeffs
@@ -442,7 +442,7 @@ CONTAINS
          ! calculate density matrix in AO basis from CO basis if required
          IF (rtp_control%canonical_ortho) THEN
             CALL dbcsr_set(rho_ao(i)%matrix, zero)
-            CALL canon_ortho_matrix_co_to_ao(rtp, rtp_control, rho_re, rho_ao, density=.TRUE.)
+            CALL canon_ortho_matrix_co_to_ao_type(rtp, rtp_control, rho_re(i)%matrix, rho_ao(i)%matrix, density=.TRUE.)
          END IF
       END DO
 
@@ -518,39 +518,51 @@ CONTAINS
    SUBROUTINE calculate_P_imaginary(qs_env, rtp, matrix_p_im, keep_sparsity)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(rt_prop_type), POINTER                        :: rtp
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_p_im
-      LOGICAL, OPTIONAL                                  :: keep_sparsity
+      TYPE(dbcsr_p_type), DIMENSION(:), INTENT(OUT), &
+         POINTER                                         :: matrix_p_im
+      LOGICAL, INTENT(IN), OPTIONAL                      :: keep_sparsity
 
       INTEGER                                            :: i, im, ncol, re
       LOGICAL                                            :: my_keep_sparsity
       REAL(KIND=dp)                                      :: alpha
       TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_new, mos_occ
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_p_im_p
+      TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
+      TYPE(rtp_control_type), POINTER                    :: rtp_control
 
-      CALL get_rtp(rtp=rtp, mos_new=mos_new)
-
+      NULLIFY (mos_new, dft_control, mos, rtp_control, matrix_p_im_p)
       my_keep_sparsity = .FALSE.
       IF (PRESENT(keep_sparsity)) my_keep_sparsity = keep_sparsity
-      CALL get_qs_env(qs_env, mos=mos)
-      ALLOCATE (mos_occ(SIZE(mos)*2))
 
+      CALL get_rtp(rtp=rtp, mos_new=mos_new)
+      CALL get_qs_env(qs_env, mos=mos, dft_control=dft_control)
+      rtp_control => dft_control%rtp_control
+
+      IF (.NOT. rtp_control%canonical_ortho) THEN
+         matrix_p_im_p => matrix_p_im
+      ELSE
+         CALL get_rtp(rtp, P_canon_im=matrix_p_im_p)
+      END IF
+
+      ALLOCATE (mos_occ(SIZE(mos)*2))
       DO i = 1, SIZE(mos_new)/2
          re = 2*i - 1; im = 2*i
          alpha = 3.0_dp - REAL(SIZE(matrix_p_im), dp)
          ALLOCATE (mos_occ(re)%matrix, mos_occ(im)%matrix)
          CALL cp_fm_create(mos_occ(re)%matrix, &
-                           matrix_struct=mos(i)%mo_set%mo_coeff%matrix_struct, &
+                           matrix_struct=mos_new(re)%matrix%matrix_struct, &
                            name="mos_occ")
          CALL cp_fm_create(mos_occ(im)%matrix, &
-                           matrix_struct=mos(i)%mo_set%mo_coeff%matrix_struct, &
+                           matrix_struct=mos_new(im)%matrix%matrix_struct, &
                            name="mos_occ")
-         CALL dbcsr_set(matrix_p_im(i)%matrix, 0.0_dp)
+         CALL dbcsr_set(matrix_p_im_p(i)%matrix, 0.0_dp)
          CALL cp_fm_get_info(mos_new(re)%matrix, ncol_global=ncol)
          CALL cp_fm_to_fm(mos_new(re)%matrix, mos_occ(re)%matrix)
          CALL cp_fm_column_scale(mos_occ(re)%matrix, mos(i)%mo_set%occupation_numbers/alpha)
          CALL cp_fm_to_fm(mos_new(im)%matrix, mos_occ(im)%matrix)
          CALL cp_fm_column_scale(mos_occ(im)%matrix, mos(i)%mo_set%occupation_numbers/alpha)
-         CALL cp_dbcsr_plus_fm_fm_t(sparse_matrix=matrix_p_im(i)%matrix, &
+         CALL cp_dbcsr_plus_fm_fm_t(sparse_matrix=matrix_p_im_p(i)%matrix, &
                                     matrix_v=mos_occ(im)%matrix, &
                                     matrix_g=mos_occ(re)%matrix, &
                                     ncol=ncol, &
@@ -558,12 +570,17 @@ CONTAINS
                                     alpha=alpha)
          ! It is actually complex conjugate not only transposed
          alpha = -alpha
-         CALL cp_dbcsr_plus_fm_fm_t(sparse_matrix=matrix_p_im(i)%matrix, &
+         CALL cp_dbcsr_plus_fm_fm_t(sparse_matrix=matrix_p_im_p(i)%matrix, &
                                     matrix_v=mos_occ(re)%matrix, &
                                     matrix_g=mos_occ(im)%matrix, &
                                     ncol=ncol, &
                                     keep_sparsity=my_keep_sparsity, &
                                     alpha=alpha)
+         IF (rtp_control%canonical_ortho) THEN
+            CALL dbcsr_set(matrix_p_im(i)%matrix, zero)
+            CALL canon_ortho_matrix_co_to_ao_type(rtp, rtp_control, matrix_p_im_p(i)%matrix, matrix_p_im(i)%matrix, &
+                                                  density=.TRUE.)
+         END IF
       END DO
       CALL cp_fm_vect_dealloc(mos_occ)
 
@@ -904,7 +921,7 @@ CONTAINS
 !> \param matrix_co ...
 !> \param density ...
 ! **************************************************************************************************
-   SUBROUTINE canon_ortho_matrix_ao_to_co_dbcsr_p(rtp, rtp_control, matrix_ao, matrix_co, density)
+   SUBROUTINE canon_ortho_matrix_ao_to_co_p_type(rtp, rtp_control, matrix_ao, matrix_co, density)
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(rtp_control_type), INTENT(IN), POINTER        :: rtp_control
       TYPE(dbcsr_p_type), DIMENSION(:), INTENT(IN), &
@@ -937,7 +954,7 @@ CONTAINS
          CALL dbcsr_multiply("T", "N", one, trsfmat, work, zero, matrix_co(i)%matrix, 1, noo, 1, noo)
       END DO
 
-   END SUBROUTINE canon_ortho_matrix_ao_to_co_dbcsr_p
+   END SUBROUTINE canon_ortho_matrix_ao_to_co_p_type
 
 ! **************************************************************************************************
 !> \brief ...
@@ -947,7 +964,7 @@ CONTAINS
 !> \param matrix_co ...
 !> \param density ...
 ! **************************************************************************************************
-   SUBROUTINE canon_ortho_matrix_ao_to_co_dbcsr(rtp, rtp_control, matrix_ao, matrix_co, density)
+   SUBROUTINE canon_ortho_matrix_ao_to_co_type(rtp, rtp_control, matrix_ao, matrix_co, density)
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(rtp_control_type), INTENT(IN), POINTER        :: rtp_control
       TYPE(dbcsr_type), INTENT(IN), POINTER              :: matrix_ao
@@ -976,7 +993,7 @@ CONTAINS
       CALL dbcsr_multiply("N", "N", one, matrix_ao, trsfmat, zero, work, 1, nao, 1, noo)
       CALL dbcsr_multiply("T", "N", one, trsfmat, work, zero, matrix_co, 1, noo, 1, noo)
 
-   END SUBROUTINE canon_ortho_matrix_ao_to_co_dbcsr
+   END SUBROUTINE canon_ortho_matrix_ao_to_co_type
 
 ! **************************************************************************************************
 !> \brief ...
@@ -986,7 +1003,7 @@ CONTAINS
 !> \param matrix_ao ...
 !> \param density ...
 ! **************************************************************************************************
-   SUBROUTINE canon_ortho_matrix_co_to_ao(rtp, rtp_control, matrix_co, matrix_ao, density)
+   SUBROUTINE canon_ortho_matrix_co_to_ao_p_type(rtp, rtp_control, matrix_co, matrix_ao, density)
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(rtp_control_type), INTENT(IN), POINTER        :: rtp_control
       TYPE(dbcsr_p_type), DIMENSION(:), INTENT(IN), &
@@ -1018,7 +1035,45 @@ CONTAINS
          CALL dbcsr_multiply("N", "N", one, trsfmat, work, zero, matrix_ao(i)%matrix, 1, nao, 1, nao)
       END DO
 
-   END SUBROUTINE canon_ortho_matrix_co_to_ao
+   END SUBROUTINE canon_ortho_matrix_co_to_ao_p_type
+
+! **************************************************************************************************
+!> \brief ...
+!> \param rtp ...
+!> \param rtp_control ...
+!> \param matrix_co ...
+!> \param matrix_ao ...
+!> \param density ...
+! **************************************************************************************************
+   SUBROUTINE canon_ortho_matrix_co_to_ao_type(rtp, rtp_control, matrix_co, matrix_ao, density)
+      TYPE(rt_prop_type), POINTER                        :: rtp
+      TYPE(rtp_control_type), INTENT(IN), POINTER        :: rtp_control
+      TYPE(dbcsr_type), INTENT(IN), POINTER              :: matrix_co
+      TYPE(dbcsr_type), INTENT(OUT), POINTER             :: matrix_ao
+      LOGICAL, INTENT(IN)                                :: density
+
+      INTEGER                                            :: nao, noo
+      TYPE(dbcsr_type), POINTER                          :: trsfmat, work, xmatrix_dbcsr, &
+                                                            ymatrix_dbcsr
+
+      NULLIFY (xmatrix_dbcsr, ymatrix_dbcsr, trsfmat, work)
+
+      CALL dbcsr_get_info(matrix_ao, nfullrows_total=nao)
+      noo = nao - rtp_control%nlindep
+      CALL get_rtp(rtp, xmatrix_dbcsr=xmatrix_dbcsr, ymatrix_dbcsr=ymatrix_dbcsr, work=work)
+
+      CPASSERT(ASSOCIATED(xmatrix_dbcsr) .AND. ASSOCIATED(ymatrix_dbcsr))
+      IF (density) THEN
+         trsfmat => xmatrix_dbcsr
+      ELSE
+         trsfmat => ymatrix_dbcsr
+      END IF
+
+      CALL dbcsr_set(work, zero)
+      CALL dbcsr_multiply("N", "T", one, matrix_co, trsfmat, zero, work, 1, noo, 1, nao)
+      CALL dbcsr_multiply("N", "N", one, trsfmat, work, zero, matrix_ao, 1, nao, 1, nao)
+
+   END SUBROUTINE canon_ortho_matrix_co_to_ao_type
 
 ! **************************************************************************************************
 !> \brief transform dbcsr matrix to fm matrix with possibly reduced dimensions

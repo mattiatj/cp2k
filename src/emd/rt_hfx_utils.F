@@ -34,6 +34,7 @@ MODULE rt_hfx_utils
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_set,&
                                               qs_rho_type
+   USE rt_propagation_types,            ONLY: get_rtp
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -74,6 +75,14 @@ CONTAINS
 
       CALL rebuild_matrices_im_kp(qs_env, rho, ks_env, dft_control%nspins, dft_control%nimages, &
                                   rebuild_matrix_p=.TRUE., rebuild_matrix_ks=.TRUE., rebuild_matrix_h=need_h_im)
+
+      NULLIFY (matrix_ks_co_im, rho_co_im)
+      IF (dft_control%rtp_control%canonical_ortho) THEN
+         CALL get_rtp(rtp, P_canon_im=rho_co_im, H_canon_im=matrix_ks_co_im)
+         CALL rebuild_matrices(rho_co_im, matrix_ks_co_im, sab_orb, matrix_s, nspins)
+         rtp%canon_ortho%P_canon_im => rho_co_im
+         rtp%canon_ortho%H_canon_im => matrix_ks_co_im
+      END IF
 
       IF (dft_control%do_admm) THEN
          CALL get_admm_env(qs_env%admm_env, &
@@ -125,7 +134,7 @@ CONTAINS
       IF (ASSOCIATED(matrix_ks)) THEN
          CALL dbcsr_deallocate_matrix_set(matrix_ks)
       END IF
-      ! Create a new density matrix set
+      ! Create a new KS matrix set
       CALL dbcsr_allocate_matrix_set(matrix_ks, nspins)
       DO i = 1, nspins
          ALLOCATE (matrix_ks(i)%matrix)
