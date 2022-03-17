@@ -124,7 +124,6 @@ CONTAINS
       END IF
 
       NULLIFY (delta_P, rho_new, delta_mos, mos_new)
-      NULLIFY (ks_mix, ks_mix_im)
       ! get everything needed and set some values
       CALL get_qs_env(qs_env, matrix_s=matrix_s)
       IF (rtp%iter == 1) THEN
@@ -179,10 +178,12 @@ CONTAINS
          END DO
       END IF
 
+      NULLIFY (matrix_ks, matrix_ks_im)
       CALL get_qs_env(qs_env, &
                       matrix_ks=matrix_ks, &
                       matrix_ks_im=matrix_ks_im)
 
+      NULLIFY (H_last_iter, ks_mix, ks_mix_im)
       CALL get_rtp(rtp=rtp, H_last_iter=H_last_iter)
       IF (rtp%mixing) THEN
          IF (unit_nr > 0) THEN
@@ -492,7 +493,8 @@ CONTAINS
             ELSE
                CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, matrix_ks_im(ispin)%matrix, &
                                                 H_canon_im(ispin)%matrix, density=.FALSE.)
-               CALL dbcsr_copy(exp_H(re)%matrix, H_canon_im(ispin)%matrix)
+               ! dbcsr_desymmetrize instead of dbcsr_copy to keep (non-)symmetry of exp_H(re)
+               CALL dbcsr_desymmetrize(H_canon_im(ispin)%matrix, exp_H(re)%matrix)
             END IF
          END DO
       END IF

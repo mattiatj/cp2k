@@ -40,7 +40,8 @@ MODULE rt_propagation_types
    USE cp_log_handling,                 ONLY: cp_to_string
    USE dbcsr_api,                       ONLY: &
         dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_desymmetrize, dbcsr_init_p, &
-        dbcsr_p_type, dbcsr_set, dbcsr_type, dbcsr_type_no_symmetry, dbcsr_type_symmetric
+        dbcsr_p_type, dbcsr_set, dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, &
+        dbcsr_type_symmetric
    USE kinds,                           ONLY: dp
    USE qs_matrix_pools,                 ONLY: mpools_get,&
                                               qs_matrix_pools_type
@@ -161,8 +162,8 @@ CONTAINS
       LOGICAL                                            :: linear_scaling
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos_aux
 
-      INTEGER                                            :: i, j, nao, ncol_block, ndep, nmo, &
-                                                            nrow_block, nspin
+      INTEGER                                            :: i, im, j, nao, ncol_block, ndep, nmo, &
+                                                            nrow_block, nspin, re
       TYPE(cp_fm_pool_p_type), DIMENSION(:), POINTER     :: ao_mo_fm_pools
       TYPE(cp_fm_struct_type), POINTER                   :: ao_mo_fmstruct, coeffs_fmstruct, &
                                                             tmp_fmstruct
@@ -321,10 +322,15 @@ CONTAINS
          CALL dbcsr_create(rtp%exp_H_old(i)%matrix, template=template, matrix_type="N")
          CALL dbcsr_init_p(rtp%exp_H_new(i)%matrix)
          CALL dbcsr_create(rtp%exp_H_new(i)%matrix, template=template, matrix_type="N")
-         CALL dbcsr_init_p(rtp%H_last_iter(i)%matrix)
-         CALL dbcsr_create(rtp%H_last_iter(i)%matrix, template=template, matrix_type="N")
          CALL dbcsr_init_p(rtp%propagator_matrix(i)%matrix)
          CALL dbcsr_create(rtp%propagator_matrix(i)%matrix, template=template, matrix_type="N")
+      END DO
+      DO i = 1, nspin
+         re = 2*i - 1; im = 2*i
+         CALL dbcsr_init_p(rtp%H_last_iter(re)%matrix)
+         CALL dbcsr_init_p(rtp%H_last_iter(im)%matrix)
+         CALL dbcsr_create(rtp%H_last_iter(re)%matrix, template=template, matrix_type=dbcsr_type_symmetric)
+         CALL dbcsr_create(rtp%H_last_iter(im)%matrix, template=template, matrix_type=dbcsr_type_antisymmetric)
       END DO
       NULLIFY (rtp%S_inv)
       ALLOCATE (rtp%S_inv)

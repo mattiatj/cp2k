@@ -11,13 +11,9 @@
 ! **************************************************************************************************
 
 MODULE rt_propagation_output
-   USE atomic_kind_types,               ONLY: atomic_kind_type,&
-                                              get_atomic_kind
-   USE cell_types,                      ONLY: cell_type,&
-                                              pbc
+   USE atomic_kind_types,               ONLY: atomic_kind_type
    USE cp_control_types,                ONLY: dft_control_type,&
                                               rtp_control_type
-   USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
    USE cp_dbcsr_operations,             ONLY: cp_dbcsr_sm_fm_multiply,&
                                               dbcsr_allocate_matrix_set,&
                                               dbcsr_deallocate_matrix_set
@@ -42,32 +38,23 @@ MODULE rt_propagation_output
                                               cp_print_key_finished_output,&
                                               cp_print_key_should_output,&
                                               cp_print_key_unit_nr
-   USE cp_para_types,                   ONLY: cp_para_env_type
    USE cp_realspace_grid_cube,          ONLY: cp_pw_to_cube
    USE dbcsr_api,                       ONLY: &
         dbcsr_add, dbcsr_binary_write, dbcsr_checksum, dbcsr_copy, dbcsr_create, &
         dbcsr_deallocate_matrix, dbcsr_desymmetrize, dbcsr_filter, dbcsr_get_info, &
         dbcsr_get_occupation, dbcsr_init_p, dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, &
-        dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_multiply, &
-        dbcsr_p_type, dbcsr_scale, dbcsr_set, dbcsr_trace, dbcsr_type, dbcsr_type_no_symmetry, &
-        dbcsr_type_symmetric
-   USE distribution_1d_types,           ONLY: distribution_1d_type
+        dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_p_type, dbcsr_scale, &
+        dbcsr_set, dbcsr_type
    USE input_constants,                 ONLY: ehrenfest,&
                                               real_time_propagation
-   USE input_section_types,             ONLY: section_get_ival,&
-                                              section_get_ivals,&
+   USE input_section_types,             ONLY: section_get_ivals,&
                                               section_vals_get_subs_vals,&
-                                              section_vals_type,&
-                                              section_vals_val_get
+                                              section_vals_type
    USE kahan_sum,                       ONLY: accurate_sum
    USE kinds,                           ONLY: default_path_length,&
                                               dp
    USE machine,                         ONLY: m_flush
-   USE message_passing,                 ONLY: mp_max,&
-                                              mp_sum
-   USE moments_utils,                   ONLY: get_reference_point
-   USE orbital_pointers,                ONLY: current_maxl,&
-                                              indco
+   USE message_passing,                 ONLY: mp_max
    USE parallel_gemm_api,               ONLY: parallel_gemm
    USE particle_list_types,             ONLY: particle_list_type
    USE particle_types,                  ONLY: particle_type
@@ -84,16 +71,11 @@ MODULE rt_propagation_output
                                               pw_type
    USE qs_environment_types,            ONLY: get_qs_env,&
                                               qs_environment_type
-   USE qs_kind_types,                   ONLY: get_qs_kind,&
-                                              get_qs_kind_set,&
+   USE qs_kind_types,                   ONLY: get_qs_kind_set,&
                                               qs_kind_type
    USE qs_linres_current,               ONLY: calculate_jrho_resp
    USE qs_linres_types,                 ONLY: current_env_type
    USE qs_mo_io,                        ONLY: write_rt_mos_to_restart
-   USE qs_moments,                      ONLY: build_local_moment_matrix,&
-                                              print_moments,&
-                                              set_label
-   USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_type
    USE qs_scf_post_gpw,                 ONLY: qs_scf_post_moments,&
@@ -104,8 +86,7 @@ MODULE rt_propagation_output
                                               qs_subsys_type
    USE rt_propagation_types,            ONLY: get_rtp,&
                                               rt_prop_type
-   USE rt_propagation_utils,            ONLY: calculate_P_imaginary,&
-                                              canon_ortho_matrix_ao_to_co
+   USE rt_propagation_utils,            ONLY: calculate_P_imaginary
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -577,9 +558,6 @@ CONTAINS
          CALL qs_scf_post_moments(qs_env%input, logger, qs_env, output_unit)
       END IF
 
-      IF (dft_control%rtp_control%canonical_ortho) THEN
-         CALL moments_ortho_basis(qs_env, logger, output_unit)
-      END IF
       CALL timestop(handle)
 
    END SUBROUTINE make_moment
@@ -798,201 +776,5 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE rt_current
-
-! **************************************************************************************************
-!> \brief Calculate moments in orthogonal basis
-!> \param qs_env ...
-!> \param logger ...
-!> \param output_unit ...
-! **************************************************************************************************
-   SUBROUTINE moments_ortho_basis(qs_env, logger, output_unit)
-      TYPE(qs_environment_type), POINTER                 :: qs_env
-      TYPE(cp_logger_type), POINTER                      :: logger
-      INTEGER, INTENT(IN)                                :: output_unit
-
-      CHARACTER(LEN=default_path_length)                 :: filename
-      INTEGER                                            :: maxmom, reference, unit_nr
-      REAL(KIND=dp), DIMENSION(:), POINTER               :: ref_point
-      TYPE(section_vals_type), POINTER                   :: input, print_key
-
-      NULLIFY (print_key, input)
-      CALL get_qs_env(qs_env, &
-                      input=input)
-
-      print_key => section_vals_get_subs_vals(section_vals=input, &
-                                              subsection_name="DFT%PRINT%MOMENTS")
-
-      IF (BTEST(cp_print_key_should_output(logger%iter_info, print_key), cp_p_file)) THEN
-
-         maxmom = section_get_ival(section_vals=input, &
-                                   keyword_name="DFT%PRINT%MOMENTS%MAX_MOMENT")
-         reference = section_get_ival(section_vals=input, &
-                                      keyword_name="DFT%PRINT%MOMENTS%REFERENCE")
-         NULLIFY (ref_point)
-         CALL section_vals_val_get(input, "DFT%PRINT%MOMENTS%REF_POINT", r_vals=ref_point)
-         unit_nr = cp_print_key_unit_nr(logger=logger, basis_section=input, &
-                                        print_key_path="DFT%PRINT%MOMENTS", extension=".dat", &
-                                        middle_name="moments-ortho", log_filename=.FALSE.)
-
-         IF (output_unit > 0) THEN
-            IF (unit_nr /= output_unit) THEN
-               INQUIRE (UNIT=unit_nr, NAME=filename)
-               WRITE (UNIT=output_unit, FMT="(/,T2,A,2(/,T3,A),/)") &
-                  "MOMENTS", "The moments in orthogonal basis are written to file:", &
-                  TRIM(filename)
-            ELSE
-               WRITE (UNIT=output_unit, FMT="(/,T2,A)") "ELECTRIC/MAGNETIC MOMENTS"
-            END IF
-         END IF
-
-         CALL calc_moments_ortho(qs_env, maxmom, reference, ref_point, unit_nr)
-
-         CALL cp_print_key_finished_output(unit_nr=unit_nr, logger=logger, &
-                                           basis_section=input, print_key_path="DFT%PRINT%MOMENTS")
-      END IF
-
-   END SUBROUTINE moments_ortho_basis
-
-! **************************************************************************************************
-!> \brief ...
-!> \param qs_env ...
-!> \param maxmom ...
-!> \param reference ...
-!> \param ref_point ...
-!> \param unit_nr ...
-! **************************************************************************************************
-   SUBROUTINE calc_moments_ortho(qs_env, maxmom, reference, ref_point, unit_nr)
-      TYPE(qs_environment_type), POINTER                 :: qs_env
-      INTEGER, INTENT(IN)                                :: maxmom, reference
-      REAL(KIND=dp), DIMENSION(:), INTENT(IN), POINTER   :: ref_point
-      INTEGER, INTENT(IN)                                :: unit_nr
-
-      CHARACTER(LEN=8), ALLOCATABLE, DIMENSION(:)        :: rlab
-      INTEGER                                            :: akind, i, ia, iatom, ikind, ispin, ix, &
-                                                            iy, iz, l, nm, nmom
-      REAL(dp)                                           :: charge, dd, strace, trace
-      REAL(dp), ALLOCATABLE, DIMENSION(:, :)             :: rmom
-      REAL(dp), DIMENSION(3)                             :: rc, ria
-      TYPE(atomic_kind_type), POINTER                    :: atomic_kind
-      TYPE(cell_type), POINTER                           :: cell
-      TYPE(cp_para_env_type), POINTER                    :: para_env
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, moments_ao, moments_co, rho_co
-      TYPE(dbcsr_type), POINTER                          :: tmp_dbcsr
-      TYPE(dft_control_type), POINTER                    :: dft_control
-      TYPE(distribution_1d_type), POINTER                :: local_particles
-      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-         POINTER                                         :: sab_orb
-      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
-      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
-      TYPE(rt_prop_type), POINTER                        :: rtp
-      TYPE(rtp_control_type), POINTER                    :: rtp_control
-
-      i = unit_nr
-      NULLIFY (rtp, matrix_s, sab_orb, dft_control, rtp_control, atomic_kind, particle_set, qs_kind_set, para_env, cell)
-
-      CALL get_qs_env(qs_env, &
-                      rtp=rtp, &
-                      matrix_s=matrix_s, &
-                      sab_orb=sab_orb, &
-                      dft_control=dft_control, &
-                      particle_set=particle_set, &
-                      qs_kind_set=qs_kind_set, &
-                      para_env=para_env, &
-                      cell=cell)
-
-      rtp_control => dft_control%rtp_control
-      CALL get_reference_point(rc, qs_env=qs_env, reference=reference, ref_point=ref_point)
-
-      ! only allow for moments up to maxl set by basis
-      nmom = MIN(maxmom, current_maxl)
-      nm = (6 + 11*nmom + 6*nmom**2 + nmom**3)/6 - 1
-
-      ! electronic contribution
-      NULLIFY (moments_ao)
-      CALL dbcsr_allocate_matrix_set(moments_ao, nm)
-      DO i = 1, nm
-         CALL dbcsr_init_p(moments_ao(i)%matrix)
-         CALL dbcsr_create(moments_ao(i)%matrix, template=matrix_s(1)%matrix, &
-                           matrix_type=dbcsr_type_symmetric)
-         CALL cp_dbcsr_alloc_block_from_nbl(moments_ao(i)%matrix, sab_orb)
-         CALL dbcsr_set(moments_ao(i)%matrix, 0.0_dp)
-      END DO
-      ! build moments_ao on AO basis
-      CALL build_local_moment_matrix(qs_env, moments_ao, nmom, ref_point=rc)
-
-      ! transform to CO basis
-      NULLIFY (moments_co)
-      CALL dbcsr_allocate_matrix_set(moments_co, nm)
-      DO i = 1, nm
-         CALL dbcsr_init_p(moments_co(i)%matrix)
-         CALL dbcsr_create(moments_co(i)%matrix, template=matrix_s(1)%matrix, &
-                           matrix_type=dbcsr_type_no_symmetry)
-         CALL dbcsr_set(moments_co(i)%matrix, 0.0_dp)
-      END DO
-      CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, moments_ao, moments_co, density=.FALSE.)
-      CALL dbcsr_deallocate_matrix_set(moments_ao)
-
-      ! calculate expectation value
-      ALLOCATE (rmom(nm + 1, 3))
-      ALLOCATE (rlab(nm + 1))
-      rmom = 0.0_dp
-      rlab = ""
-      NULLIFY (rho_co)
-      CALL get_rtp(rtp, P_canon=rho_co)
-      NULLIFY (tmp_dbcsr)
-      ALLOCATE (tmp_dbcsr)
-      CALL dbcsr_create(tmp_dbcsr, template=matrix_s(1)%matrix, matrix_type=dbcsr_type_no_symmetry)
-
-      ! trace
-      DO i = 1, SIZE(moments_co)
-         strace = 0.0_dp
-         DO ispin = 1, dft_control%nspins
-            CALL dbcsr_set(tmp_dbcsr, 0.0_dp)
-            CALL dbcsr_multiply("T", "N", 1.0_dp, rho_co(ispin)%matrix, moments_co(i)%matrix, &
-                                0.0_dp, tmp_dbcsr)
-            CALL dbcsr_trace(tmp_dbcsr, trace)
-            strace = strace + trace
-         END DO
-         rmom(i + 1, 1) = strace
-      END DO
-
-      CALL dbcsr_deallocate_matrix(tmp_dbcsr)
-      CALL dbcsr_deallocate_matrix_set(moments_co)
-
-      ! nuclear contribution
-      CALL get_qs_env(qs_env=qs_env, &
-                      local_particles=local_particles)
-      DO ikind = 1, SIZE(local_particles%n_el)
-         DO ia = 1, local_particles%n_el(ikind)
-            iatom = local_particles%list(ikind)%array(ia)
-            ! fold atomic positions back into unit cell
-            ria = pbc(particle_set(iatom)%r - rc, cell) + rc
-            ria = ria - rc
-            atomic_kind => particle_set(iatom)%atomic_kind
-            CALL get_atomic_kind(atomic_kind, kind_number=akind)
-            CALL get_qs_kind(qs_kind_set(akind), core_charge=charge)
-            rmom(1, 2) = rmom(1, 2) - charge
-            DO l = 1, nm
-               ix = indco(1, l + 1)
-               iy = indco(2, l + 1)
-               iz = indco(3, l + 1)
-               dd = 1._dp
-               IF (ix > 0) dd = dd*ria(1)**ix
-               IF (iy > 0) dd = dd*ria(2)**iy
-               IF (iz > 0) dd = dd*ria(3)**iz
-               rmom(l + 1, 2) = rmom(l + 1, 2) - charge*dd
-               CALL set_label(rlab(l + 1), ix, iy, iz)
-            END DO
-         END DO
-      END DO
-      CALL mp_sum(rmom(:, 2), para_env%group)
-      rmom(:, :) = -rmom(:, :)
-      rmom(:, 3) = rmom(:, 1) + rmom(:, 2)
-
-      ! print
-      CALL print_moments(unit_nr, nmom, rmom, rlab, rc, cell, .FALSE.)
-      DEALLOCATE (rmom, rlab)
-
-   END SUBROUTINE calc_moments_ortho
 
 END MODULE rt_propagation_output
