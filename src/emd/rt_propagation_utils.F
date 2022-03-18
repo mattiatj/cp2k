@@ -265,7 +265,7 @@ CONTAINS
                                                             unit_nr
       REAL(KIND=dp)                                      :: alpha, cs_pos
       TYPE(atomic_kind_type), DIMENSION(:), POINTER      :: atomic_kind_set
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_new, mos_old
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_co, mos_old
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(cp_para_env_type), POINTER                    :: para_env
       TYPE(dbcsr_distribution_type)                      :: dist
@@ -276,9 +276,10 @@ CONTAINS
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(qs_rho_type), POINTER                         :: rho_struct
       TYPE(rt_prop_type), POINTER                        :: rtp
+      TYPE(rtp_control_type), POINTER                    :: rtp_control
       TYPE(section_vals_type), POINTER                   :: dft_section, input
 
-      NULLIFY (atomic_kind_set, qs_kind_set, mo_array, particle_set, rho_struct, para_env)
+      NULLIFY (atomic_kind_set, qs_kind_set, mo_array, particle_set, rho_struct, para_env, rtp_control, dft_control)
 
       CALL get_qs_env(qs_env, &
                       qs_kind_set=qs_kind_set, &
@@ -291,6 +292,7 @@ CONTAINS
                       rho=rho_struct, &
                       para_env=para_env)
       logger => cp_get_default_logger()
+      rtp_control => dft_control%rtp_control
       IF (logger%para_env%ionode) THEN
          unit_nr = cp_logger_get_default_unit_nr(logger, local=.TRUE.)
       ELSE
@@ -359,13 +361,21 @@ CONTAINS
             END DO
             CALL calc_update_rho_sparse(qs_env)
          ELSE
-            CALL get_rtp(rtp=rtp, mos_old=mos_old, mos_new=mos_new)
+            NULLIFY (mos_old, mos_co)
+            IF (rtp_control%canonical_ortho) THEN
+               CALL get_rtp(rtp=rtp, mos_ao=mos_old, mos_old=mos_co)
+            ELSE
+               CALL get_rtp(rtp=rtp, mos_old=mos_old)
+            END IF
             CALL read_rt_mos_from_restart(mo_array, mos_old, atomic_kind_set, qs_kind_set, particle_set, para_env, &
                                           id_nr, dft_control%multiplicity, dft_section)
             DO ispin = 1, nspin
                CALL calculate_density_matrix(mo_array(ispin)%mo_set, &
                                              p_rmpv(ispin)%matrix)
             END DO
+            IF (rtp_control%canonical_ortho) THEN
+               CALL transform_to_co_coeffs(qs_env, mos_old, mos_co)
+            END IF
          END IF
       END SELECT
 
@@ -454,13 +464,11 @@ CONTAINS
          CALL qs_rho_set(rho, rho_ao_im=rho_ao_im)
       END IF
 
-      ! transform mo_coeffs to AO basis for admm fit
+      ! transform mo_coeffs to AO basis for e. g. restart
       IF (rtp_control%canonical_ortho) THEN
-         IF (dft_control%do_admm) THEN
-            NULLIFY (mos_ao)
-            CALL get_rtp(rtp, mos_ao=mos_ao)
-            CALL transform_to_ao_coeffs(qs_env, mos_new, mos_ao)
-         END IF
+         NULLIFY (mos_ao)
+         CALL get_rtp(rtp, mos_ao=mos_ao)
+         CALL transform_to_ao_coeffs(qs_env, mos_new, mos_ao)
       END IF
       CALL qs_ks_did_change(ks_env, rho_changed=.TRUE.)
 

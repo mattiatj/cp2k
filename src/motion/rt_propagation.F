@@ -519,6 +519,8 @@ CONTAINS
          IF (dft_control%rtp_control%canonical_ortho) CALL rt_canon_ortho(qs_env, calc_trsfmatrices=.FALSE.)
          CALL rt_prop_create(qs_env%rtp, qs_env%mos, qs_env%mpools, dft_control, matrix_s(1)%matrix, &
                              rtp_control%linear_scaling, qs_env%mos_aux_fit)
+         ! need transformation matrices for transformation of restart wfn, which is stored in AO basis
+         IF (dft_control%rtp_control%canonical_ortho) CALL rt_canon_ortho(qs_env, calc_trsfmatrices=.TRUE.)
          CALL get_restart_wfn(qs_env)
 
          qs_env%run_rtp = .TRUE.

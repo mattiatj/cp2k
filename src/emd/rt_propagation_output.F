@@ -223,7 +223,11 @@ CONTAINS
                END IF
             END IF
          ELSE
-            CALL get_rtp(rtp=rtp, mos_new=mos_new)
+            IF (rtp_control%canonical_ortho) THEN
+               CALL get_rtp(rtp=rtp, mos_ao=mos_new)
+            ELSE
+               CALL get_rtp(rtp=rtp, mos_new=mos_new)
+            END IF
             IF (.NOT. dft_control%qs_control%dftb) THEN
                CALL write_available_results(qs_env=qs_env)
                IF (BTEST(cp_print_key_should_output(logger%iter_info, &

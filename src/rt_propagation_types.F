@@ -277,18 +277,17 @@ CONTAINS
                CALL cp_fm_create(rtp%canon_ortho%work_fm, matrix_struct=rtp%ao_ao_fmstruct, name="work_fm")
             END IF
 
-            ! create mos in ao basis for admm fit
+            ! create mos in ao basis for e. g. admm fit and restart
             NULLIFY (rtp%canon_ortho%mos_ao)
-            IF (dft_control%do_admm) THEN
-               ALLOCATE (rtp%canon_ortho%mos_ao(2*nspin))
-               DO i = 1, nspin
-                  coeffs_fmstruct => mos(i)%mo_set%mo_coeff%matrix_struct
-                  DO j = 1, 2
-                     CALL cp_fm_create(rtp%canon_ortho%mos_ao(2*(i - 1) + j)%matrix, matrix_struct=coeffs_fmstruct, &
-                                       name="mos_ao"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
-                  END DO
+
+            ALLOCATE (rtp%canon_ortho%mos_ao(2*nspin))
+            DO i = 1, nspin
+               coeffs_fmstruct => mos(i)%mo_set%mo_coeff%matrix_struct
+               DO j = 1, 2
+                  CALL cp_fm_create(rtp%canon_ortho%mos_ao(2*(i - 1) + j)%matrix, matrix_struct=coeffs_fmstruct, &
+                                    name="mos_ao"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
                END DO
-            END IF
+            END DO
 
             ! template for fm matrices in the CO basis
             NULLIFY (rtp%canon_ortho%oo_oo_fmstruct)
