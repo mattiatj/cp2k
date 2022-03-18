@@ -294,17 +294,16 @@ CONTAINS
       TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_new
       TYPE(cp_fm_type), POINTER                          :: mo_coeff, mo_coeff_aux_fit
       TYPE(dft_control_type), POINTER                    :: dft_control
-      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
       TYPE(section_vals_type), POINTER                   :: input, xc_section
 
       CALL timeset(routineN, handle)
 
-      NULLIFY (dft_control, qs_kind_set)
-
+      NULLIFY (dft_control, particle_set)
+      CALL get_qs_env(qs_env, dft_control=dft_control)
       IF (.NOT. (ASSOCIATED(admm_env))) THEN
-         CALL get_qs_env(qs_env, input=input, natom=natoms, dft_control=dft_control, qs_kind_set=qs_kind_set)
-         CALL get_qs_kind_set(qs_kind_set, nsgf=nao_aux_fit, basis_type="AUX_FIT")
-         CALL admm_env_create(admm_env, dft_control%admm_control, mos, para_env, natoms, nao_aux_fit)
+         CALL get_qs_env(qs_env, input=input, particle_set=particle_set)
+         natoms = SIZE(particle_set, 1)
+         CALL admm_env_create(admm_env, dft_control%admm_control, mos, mos_aux_fit, para_env, natoms)
          xc_section => section_vals_get_subs_vals(input, "DFT%XC")
          CALL create_admm_xc_section(x_data=qs_env%x_data, xc_section=xc_section, &
                                      admm_env=admm_env)
@@ -335,11 +334,16 @@ CONTAINS
       END IF
 
       ! *** Calculate the mo_coeffs for the fitting basis
+      NULLIFY (mos_new)
       DO ispin = 1, nspins
          nmo = admm_env%nmo(ispin)
          IF (nmo == 0) CYCLE
          !! Lambda = C^(T)*B*C
-         CALL get_rtp(rtp=rtp, mos_new=mos_new)
+         IF (dft_control%rtp_control%canonical_ortho) THEN
+            CALL get_rtp(rtp=rtp, mos_ao=mos_new)
+         ELSE
+            CALL get_rtp(rtp=rtp, mos_new=mos_new)
+         END IF
          CALL get_mo_set(mos(ispin)%mo_set, mo_coeff=mo_coeff, occupation_numbers=occ_num, nmo=nmo_mos)
          CALL get_mo_set(mos_aux_fit(ispin)%mo_set, mo_coeff=mo_coeff_aux_fit, &
                          occupation_numbers=occ_num_aux)

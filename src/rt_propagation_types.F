@@ -9,7 +9,7 @@
 !> \brief Types and set_get for real time propagation
 !>        depending on runtype and diagonalization method different
 !>        matrices are allocated
-!>        exp_H_old, exp_H_new, mos_new, mos_old contain always
+!>        exp_H_old, exp_H_new, mos_ao, mos_old contai%canon_ortho%mos_ao
 !>        real and imaginary parts of the matrices
 !>        odd index = real part (alpha, beta spin)
 !>        even index= imaginary part (alpha, beta spin)
@@ -86,6 +86,7 @@ MODULE rt_propagation_types
       TYPE(dbcsr_p_type), POINTER, DIMENSION(:)   :: H_canon_im
       TYPE(dbcsr_p_type), POINTER, DIMENSION(:)   :: P_canon_im
       TYPE(cp_fm_struct_type), POINTER            :: oo_oo_fmstruct
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER   :: mos_ao
    END TYPE rtp_canon_ortho
 
    TYPE rt_prop_type
@@ -276,6 +277,19 @@ CONTAINS
                CALL cp_fm_create(rtp%canon_ortho%work_fm, matrix_struct=rtp%ao_ao_fmstruct, name="work_fm")
             END IF
 
+            ! create mos in ao basis for admm fit
+            NULLIFY (rtp%canon_ortho%mos_ao)
+            IF (dft_control%do_admm) THEN
+               ALLOCATE (rtp%canon_ortho%mos_ao(2*nspin))
+               DO i = 1, nspin
+                  coeffs_fmstruct => mos(i)%mo_set%mo_coeff%matrix_struct
+                  DO j = 1, 2
+                     CALL cp_fm_create(rtp%canon_ortho%mos_ao(2*(i - 1) + j)%matrix, matrix_struct=coeffs_fmstruct, &
+                                       name="mos_ao"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
+                  END DO
+               END DO
+            END IF
+
             ! template for fm matrices in the CO basis
             NULLIFY (rtp%canon_ortho%oo_oo_fmstruct)
             CALL cp_fm_struct_create(fmstruct=rtp%canon_ortho%oo_oo_fmstruct, &
@@ -416,11 +430,12 @@ CONTAINS
 !> \param H_canon_im ...
 !> \param work ...
 !> \param work_fm ...
+!> \param mos_ao ...
 ! **************************************************************************************************
    SUBROUTINE get_rtp(rtp, exp_H_old, exp_H_new, H_last_iter, rho_old, rho_next, rho_new, mos, mos_new, mos_old, &
                       mos_next, xmatrix, ymatrix, xmatrix_dbcsr, ymatrix_dbcsr, S_inv, S_half, S_minus_half, B_mat, &
                       C_mat, propagator_matrix, mixing, mixing_factor, S_der, dt, nsteps, SinvH, SinvB, admm_mos, &
-                      P_canon, H_canon, P_canon_im, H_canon_im, work, work_fm)
+                      P_canon, H_canon, P_canon_im, H_canon_im, work, work_fm, mos_ao)
 
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(dbcsr_p_type), DIMENSION(:), OPTIONAL, &
@@ -448,6 +463,8 @@ CONTAINS
          POINTER                                         :: P_canon, H_canon, P_canon_im, H_canon_im
       TYPE(dbcsr_type), OPTIONAL, POINTER                :: work
       TYPE(cp_fm_type), OPTIONAL, POINTER                :: work_fm
+      TYPE(cp_fm_p_type), DIMENSION(:), OPTIONAL, &
+         POINTER                                         :: mos_ao
 
       CPASSERT(ASSOCIATED(rtp))
       IF (PRESENT(exp_H_old)) exp_H_old => rtp%exp_H_old
@@ -474,6 +491,7 @@ CONTAINS
       IF (PRESENT(H_canon)) H_canon => rtp%canon_ortho%H_canon
       IF (PRESENT(P_canon_im)) P_canon_im => rtp%canon_ortho%P_canon_im
       IF (PRESENT(H_canon_im)) H_canon_im => rtp%canon_ortho%H_canon_im
+      IF (PRESENT(mos_ao)) mos_ao => rtp%canon_ortho%mos_ao
 
       IF (PRESENT(S_inv)) S_inv => rtp%S_inv
       IF (PRESENT(S_half)) S_half => rtp%S_half
@@ -545,6 +563,8 @@ CONTAINS
             CALL dbcsr_deallocate_matrix_set(rtp%canon_ortho%P_canon_im)
          IF (ASSOCIATED(rtp%canon_ortho%oo_oo_fmstruct)) &
             CALL cp_fm_struct_release(rtp%canon_ortho%oo_oo_fmstruct)
+         IF (ASSOCIATED(rtp%canon_ortho%mos_ao)) &
+            CALL cp_fm_vect_dealloc(rtp%canon_ortho%mos_ao)
          DEALLOCATE (rtp%canon_ortho)
       END IF
       CALL dbcsr_deallocate_matrix(rtp%S_inv)

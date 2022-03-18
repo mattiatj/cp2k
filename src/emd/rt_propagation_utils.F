@@ -387,7 +387,7 @@ CONTAINS
       INTEGER                                            :: handle, i, im, ncol, re
       REAL(KIND=dp)                                      :: alpha
       TYPE(cp_fm_p_type)                                 :: mos_occ
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_new
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_ao, mos_new
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: rho_ao, rho_ao_im, rho_co, rho_re
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
@@ -454,6 +454,14 @@ CONTAINS
          CALL qs_rho_set(rho, rho_ao_im=rho_ao_im)
       END IF
 
+      ! transform mo_coeffs to AO basis for admm fit
+      IF (rtp_control%canonical_ortho) THEN
+         IF (dft_control%do_admm) THEN
+            NULLIFY (mos_ao)
+            CALL get_rtp(rtp, mos_ao=mos_ao)
+            CALL transform_to_ao_coeffs(qs_env, mos_new, mos_ao)
+         END IF
+      END IF
       CALL qs_ks_did_change(ks_env, rho_changed=.TRUE.)
 
       CALL timestop(handle)
