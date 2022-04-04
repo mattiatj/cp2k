@@ -110,7 +110,8 @@ CONTAINS
       INTEGER                                            :: aspc_order, handle, i, im, re, unit_nr
       TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: delta_mos, mos_new
       TYPE(cp_logger_type), POINTER                      :: logger
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: delta_P, H_last_iter, ks_mix, ks_mix_im, &
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: delta_P, H_canon, H_canon_im, &
+                                                            H_last_iter, ks_mix, ks_mix_im, &
                                                             matrix_ks, matrix_ks_im, matrix_s, &
                                                             rho_new
 
@@ -190,43 +191,56 @@ CONTAINS
             WRITE (unit_nr, '(t3,a,2f16.8)') "Mixing the Hamiltonians to improve robustness, mixing factor: ", rtp%mixing_factor
          END IF
          CALL dbcsr_allocate_matrix_set(ks_mix, SIZE(matrix_ks))
-         CALL dbcsr_allocate_matrix_set(ks_mix_im, SIZE(matrix_ks))
+         IF (rtp%do_hfx) THEN
+            CALL dbcsr_allocate_matrix_set(ks_mix_im, SIZE(matrix_ks))
+         END IF
          DO i = 1, SIZE(matrix_ks)
             CALL dbcsr_init_p(ks_mix(i)%matrix)
             CALL dbcsr_create(ks_mix(i)%matrix, template=matrix_ks(1)%matrix)
-            CALL dbcsr_init_p(ks_mix_im(i)%matrix)
-            CALL dbcsr_create(ks_mix_im(i)%matrix, template=matrix_ks(1)%matrix, matrix_type=dbcsr_type_antisymmetric)
+            CALL dbcsr_set(ks_mix(i)%matrix, 0.0_dp)
+            IF (rtp%do_hfx) THEN
+               CALL dbcsr_init_p(ks_mix_im(i)%matrix)
+               CALL dbcsr_create(ks_mix_im(i)%matrix, template=matrix_ks(1)%matrix, matrix_type=dbcsr_type_antisymmetric)
+               CALL dbcsr_set(ks_mix_im(i)%matrix, 0.0_dp)
+            END IF
          END DO
          DO i = 1, SIZE(matrix_ks)
             re = 2*i - 1
             im = 2*i
-            CALL dbcsr_add(ks_mix(i)%matrix, matrix_ks(i)%matrix, 0.0_dp, rtp%mixing_factor)
-            CALL dbcsr_add(ks_mix(i)%matrix, H_last_iter(re)%matrix, 1.0_dp, 1.0_dp - rtp%mixing_factor)
-            IF (rtp%do_hfx) THEN
-               CALL dbcsr_add(ks_mix_im(i)%matrix, matrix_ks_im(i)%matrix, 0.0_dp, rtp%mixing_factor)
-               CALL dbcsr_add(ks_mix_im(i)%matrix, H_last_iter(im)%matrix, 1.0_dp, 1.0_dp - rtp%mixing_factor)
+            IF (.NOT. rtp_control%canonical_ortho) THEN
+               CALL dbcsr_add(ks_mix(i)%matrix, matrix_ks(i)%matrix, 0.0_dp, rtp%mixing_factor)
+               CALL dbcsr_add(ks_mix(i)%matrix, H_last_iter(re)%matrix, 1.0_dp, 1.0_dp - rtp%mixing_factor)
+               IF (rtp%do_hfx) THEN
+                  CALL dbcsr_add(ks_mix_im(i)%matrix, matrix_ks_im(i)%matrix, 0.0_dp, rtp%mixing_factor)
+                  CALL dbcsr_add(ks_mix_im(i)%matrix, H_last_iter(im)%matrix, 1.0_dp, 1.0_dp - rtp%mixing_factor)
+               END IF
+            ELSE
+               NULLIFY (H_canon, H_canon_im)
+               CALL get_rtp(rtp, H_canon=H_canon)
+               CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, matrix_ks(i)%matrix, &
+                                                H_canon(i)%matrix, density=.FALSE.)
+               CALL dbcsr_add(ks_mix(i)%matrix, H_canon(i)%matrix, 0.0_dp, rtp%mixing_factor)
+               CALL dbcsr_add(ks_mix(i)%matrix, H_last_iter(re)%matrix, 1.0_dp, 1.0_dp - rtp%mixing_factor)
+               IF (rtp%do_hfx) THEN
+                  CALL get_rtp(rtp, H_canon_im=H_canon_im)
+                  CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, matrix_ks_im(i)%matrix, &
+                                                   H_canon_im(i)%matrix, density=.FALSE.)
+                  CALL dbcsr_add(ks_mix_im(i)%matrix, H_canon_im(i)%matrix, 0.0_dp, rtp%mixing_factor)
+                  CALL dbcsr_add(ks_mix_im(i)%matrix, H_last_iter(im)%matrix, 1.0_dp, 1.0_dp - rtp%mixing_factor)
+               END IF
             END IF
          END DO
          CALL calc_SinvH(rtp, ks_mix, ks_mix_im, rtp_control)
          DO i = 1, SIZE(matrix_ks)
             re = 2*i - 1
             im = 2*i
-            IF (.NOT. rtp_control%canonical_ortho) THEN
-               CALL dbcsr_copy(H_last_iter(re)%matrix, ks_mix(i)%matrix)
-               IF (rtp%do_hfx) THEN
-                  CALL dbcsr_copy(H_last_iter(im)%matrix, ks_mix_im(i)%matrix)
-               END IF
-            ELSE
-               CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, ks_mix(i)%matrix, &
-                                                H_last_iter(re)%matrix, density=.FALSE.)
-               IF (rtp%do_hfx) THEN
-                  CALL canon_ortho_matrix_ao_to_co(rtp, rtp_control, ks_mix_im(i)%matrix, &
-                                                   H_last_iter(im)%matrix, density=.FALSE.)
-               END IF
+            CALL dbcsr_copy(H_last_iter(re)%matrix, ks_mix(i)%matrix)
+            IF (rtp%do_hfx) THEN
+               CALL dbcsr_copy(H_last_iter(im)%matrix, ks_mix_im(i)%matrix)
             END IF
          END DO
          CALL dbcsr_deallocate_matrix_set(ks_mix)
-         CALL dbcsr_deallocate_matrix_set(ks_mix_im)
+         IF (rtp%do_hfx) CALL dbcsr_deallocate_matrix_set(ks_mix_im)
       ELSE
          CALL calc_SinvH(rtp, matrix_ks, matrix_ks_im, rtp_control)
          DO i = 1, SIZE(matrix_ks)
