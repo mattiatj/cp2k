@@ -40,7 +40,8 @@ MODULE rt_propagation_types
    USE cp_log_handling,                 ONLY: cp_to_string
    USE dbcsr_api,                       ONLY: &
         dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_desymmetrize, dbcsr_init_p, &
-        dbcsr_p_type, dbcsr_set, dbcsr_type, dbcsr_type_no_symmetry, dbcsr_type_symmetric
+        dbcsr_p_type, dbcsr_set, dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, &
+        dbcsr_type_symmetric
    USE kinds,                           ONLY: dp
    USE qs_matrix_pools,                 ONLY: mpools_get,&
                                               qs_matrix_pools_type
@@ -338,6 +339,12 @@ CONTAINS
          CALL dbcsr_create(rtp%H_last_iter(i)%matrix, template=template, matrix_type=dbcsr_type_no_symmetry)
          CALL dbcsr_init_p(rtp%propagator_matrix(i)%matrix)
          CALL dbcsr_create(rtp%propagator_matrix(i)%matrix, template=template, matrix_type="N")
+      END DO
+      DO i = 1, nspin
+         CALL dbcsr_init_p(rtp%H_last_iter(2*i - 1)%matrix)
+         CALL dbcsr_init_p(rtp%H_last_iter(2*i)%matrix)
+         CALL dbcsr_create(rtp%H_last_iter(2*i - 1)%matrix, template=template, matrix_type=dbcsr_type_symmetric)
+         CALL dbcsr_create(rtp%H_last_iter(2*i)%matrix, template=template, matrix_type=dbcsr_type_antisymmetric)
       END DO
       NULLIFY (rtp%S_inv)
       ALLOCATE (rtp%S_inv)
