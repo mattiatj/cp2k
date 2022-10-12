@@ -449,6 +449,7 @@ CONTAINS
                                     ncol=ncol, &
                                     alpha=alpha)
          CALL cp_fm_release(mos_occ%matrix)
+         DEALLOCATE (mos_occ%matrix)
          ! calculate density matrix in AO basis from CO basis if required
          IF (rtp_control%canonical_ortho) THEN
             CALL dbcsr_set(rho_ao(i)%matrix, zero)
