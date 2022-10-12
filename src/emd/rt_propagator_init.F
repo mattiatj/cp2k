@@ -171,10 +171,12 @@ CONTAINS
                ALLOCATE (propagator_matrix_fm(SIZE(propagator_matrix)))
                IF (.NOT. rtp_control%canonical_ortho) THEN
                   DO i = 1, SIZE(exp_H_new)
+                     ALLOCATE (propagator_fm(i)%matrix)
                      CALL cp_fm_create(propagator_fm(i)%matrix, &
                                        matrix_struct=rtp%ao_ao_fmstruct, &
                                        name="prop_fm")
                      CALL copy_dbcsr_to_fm(exp_H_new(i)%matrix, propagator_fm(i)%matrix)
+                     ALLOCATE (propagator_matrix_fm(i)%matrix)
                      CALL cp_fm_create(propagator_matrix_fm(i)%matrix, &
                                        matrix_struct=rtp%ao_ao_fmstruct, &
                                        name="prop_mat_fm")
@@ -183,11 +185,13 @@ CONTAINS
                ELSE
                   ! need to reduce dimension of propagator_matrix_fm if linear dependencies in S were removed
                   DO i = 1, SIZE(propagator_fm)
+                     ALLOCATE (propagator_fm(i)%matrix)
                      CALL cp_fm_create(propagator_fm(i)%matrix, &
                                        matrix_struct=rtp%canon_ortho%oo_oo_fmstruct, &
                                        name="prop fm red")
                      CALL canon_ortho_dbcsr_to_fm_reduced(rtp, rtp_control, exp_H_new(i)%matrix, &
                                                           propagator_fm(i)%matrix)
+                     ALLOCATE (propagator_matrix_fm(i)%matrix)
                      CALL cp_fm_create(propagator_matrix_fm(i)%matrix, &
                                        matrix_struct=rtp%canon_ortho%oo_oo_fmstruct, &
                                        name="prop fm red")
