@@ -205,8 +205,7 @@ CONTAINS
       INTEGER, DIMENSION(2)                              :: nelectron_spin
       LOGICAL                                            :: periodic_cell
       TYPE(cell_type), POINTER                           :: cell
-      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_new, mos_old, mos_ortho_new, &
-                                                            mos_ortho_old
+      TYPE(cp_fm_p_type), DIMENSION(:), POINTER          :: mos_new, mos_old
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_ks, matrix_s, rho_new, rho_old
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(mo_set_p_type), DIMENSION(:), POINTER         :: mos
@@ -245,10 +244,7 @@ CONTAINS
                   IF (periodic_cell) THEN
                      CPWARN("This application of the delta pulse is not compatible with PBC!")
                   END IF
-                  CALL apply_delta_pulse(qs_env, mos_old, mos_new, .FALSE.)
-                  IF (rtp_control%canonical_ortho) THEN
-                     CALL apply_delta_pulse(qs_env, mos_ortho_old, mos_ortho_new, .TRUE.)
-                  END IF
+                  CALL apply_delta_pulse(qs_env, mos_old, mos_new)
                END IF
             ELSE IF (rtp_control%apply_delta_pulse_mag) THEN
                IF (periodic_cell) THEN
@@ -481,7 +477,7 @@ CONTAINS
          CALL get_qs_env(qs_env, matrix_s=matrix_s)
          IF (dft_control%rtp_control%canonical_ortho) CALL rt_canon_ortho(qs_env, calc_trsfmatrices=.FALSE.)
          CALL rt_prop_create(qs_env%rtp, qs_env%mos, qs_env%mpools, dft_control, matrix_s(1)%matrix, &
-                             rtp_control%linear_scaling, qs_env%mos_aux_fit)
+                             rtp_control%linear_scaling, qs_env%admm_env%mos_aux_fit)
 
       CASE (use_restart_wfn, use_rt_restart)
          CALL qs_energies_init(qs_env, .FALSE.)
@@ -518,7 +514,7 @@ CONTAINS
          CALL get_qs_env(qs_env, matrix_s=matrix_s)
          IF (dft_control%rtp_control%canonical_ortho) CALL rt_canon_ortho(qs_env, calc_trsfmatrices=.FALSE.)
          CALL rt_prop_create(qs_env%rtp, qs_env%mos, qs_env%mpools, dft_control, matrix_s(1)%matrix, &
-                             rtp_control%linear_scaling, qs_env%mos_aux_fit)
+                             rtp_control%linear_scaling, qs_env%admm_env%mos_aux_fit)
          ! need transformation matrices for transformation of restart wfn, which is stored in AO basis
          IF (dft_control%rtp_control%canonical_ortho) CALL rt_canon_ortho(qs_env, calc_trsfmatrices=.TRUE.)
          CALL get_restart_wfn(qs_env)

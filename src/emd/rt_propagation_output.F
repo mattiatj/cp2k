@@ -376,7 +376,7 @@ CONTAINS
 
       CALL timeset(routineN, handle)
 
-      NULLIFY (mos_new, newstruct, newstruct1, tmp_fm_struct, work, work1, work2)
+      NULLIFY (mos_new, newstruct, newstruct1, tmp_fm_struct)
       CALL get_rtp(rtp=rtp, mos_new=mos_new)
 
       nspin = SIZE(delta_mos)/2

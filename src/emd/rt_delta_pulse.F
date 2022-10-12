@@ -102,7 +102,7 @@ CONTAINS
 
       INTEGER                                            :: handle, icol, idir, im, irow, ispin, &
                                                             nao, ncol_local, nmo, noo, nrow_local, &
-                                                            nvirt, re
+                                                            nvirt, re, reference
       INTEGER, DIMENSION(:), POINTER                     :: col_indices, row_indices
       LOGICAL                                            :: com_nl, len_rep, periodic_cell
       REAL(KIND=dp)                                      :: eps_ppnl, factor
@@ -216,7 +216,7 @@ CONTAINS
       CALL cp_fm_create(S_chol, matrix_struct=fm_struct, name="S_chol")
 
       NULLIFY (eigenvalues, dbcsr_tmp, dbcsr_tmp2)
-      IF (.NOT. ortho) THEN
+      IF (.NOT. rtp_control%canonical_ortho) THEN
          CALL copy_dbcsr_to_fm(matrix_s(1)%matrix, S_chol)
          CALL cp_fm_cholesky_decompose(S_chol)
          DO ispin = 1, SIZE(matrix_ks)
@@ -443,7 +443,7 @@ CONTAINS
       CALL dbcsr_copy(sinmat, matrix_s(1)%matrix, 'SIN MOM')
       CALL build_berry_moment_matrix(qs_env, cosmat, sinmat, kvec)
 
-      NULLIFY (S_inv_fm, tmp, cosmat_co, sinmat_co, cosmat_fm, sinmat_fm)
+      NULLIFY (cosmat_co, sinmat_co)
       IF (.NOT. rtp_control%canonical_ortho) THEN
          ! invert overlap
          CALL cp_fm_create(S_inv_fm, matrix_struct=rtp%ao_ao_fmstruct, name="S_inv_fm")

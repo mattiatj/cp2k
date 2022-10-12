@@ -21,7 +21,6 @@ MODULE rt_make_propagators
                                               cp_fm_p_type,&
                                               cp_fm_to_fm
    USE cp_fm_vect,                      ONLY: cp_fm_vect_dealloc
-   USE cp_gemm_interface,               ONLY: cp_gemm
    USE dbcsr_api,                       ONLY: dbcsr_copy,&
                                               dbcsr_create,&
                                               dbcsr_deallocate_matrix,&
@@ -43,6 +42,7 @@ MODULE rt_make_propagators
                                               exp_pade_only_imaginary,&
                                               taylor_full_complex,&
                                               taylor_only_imaginary
+   USE parallel_gemm_api,               ONLY: parallel_gemm
    USE rt_propagation_types,            ONLY: get_rtp,&
                                               rt_prop_type
    USE rt_propagation_utils,            ONLY: canon_ortho_dbcsr_to_fm_reduced,&
@@ -194,14 +194,14 @@ CONTAINS
                   re = 2*i - 1
                   im = 2*i
                   CALL cp_fm_get_info(mos_old(re)%matrix, ncol_global=nmo)
-                  CALL cp_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, exp_H_fm(re)%matrix, mos_old(re)%matrix, &
-                               zero, mos_next(re)%matrix)
-                  CALL cp_gemm("N", "N", nao - ndep, nmo, nao - ndep, -one, exp_H_fm(im)%matrix, mos_old(im)%matrix, &
-                               one, mos_next(re)%matrix)
-                  CALL cp_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, exp_H_fm(im)%matrix, mos_old(re)%matrix, &
-                               zero, mos_next(im)%matrix)
-                  CALL cp_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, exp_H_fm(re)%matrix, mos_old(im)%matrix, &
-                               one, mos_next(im)%matrix)
+                  CALL parallel_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, exp_H_fm(re)%matrix, mos_old(re)%matrix, &
+                                     zero, mos_next(re)%matrix)
+                  CALL parallel_gemm("N", "N", nao - ndep, nmo, nao - ndep, -one, exp_H_fm(im)%matrix, mos_old(im)%matrix, &
+                                     one, mos_next(re)%matrix)
+                  CALL parallel_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, exp_H_fm(im)%matrix, mos_old(re)%matrix, &
+                                     zero, mos_next(im)%matrix)
+                  CALL parallel_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, exp_H_fm(re)%matrix, mos_old(im)%matrix, &
+                                     one, mos_next(im)%matrix)
                END DO
 
                CALL cp_fm_vect_dealloc(exp_H_fm)
@@ -219,14 +219,14 @@ CONTAINS
             re = 2*i - 1
             im = 2*i
             CALL cp_fm_get_info(mos_new(re)%matrix, ncol_global=nmo)
-            CALL cp_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, propagator_fm(re)%matrix, mos_next(re)%matrix, &
-                         zero, mos_new(re)%matrix)
-            CALL cp_gemm("N", "N", nao - ndep, nmo, nao - ndep, -one, propagator_fm(im)%matrix, mos_next(im)%matrix, &
-                         one, mos_new(re)%matrix)
-            CALL cp_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, propagator_fm(im)%matrix, mos_next(re)%matrix, &
-                         zero, mos_new(im)%matrix)
-            CALL cp_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, propagator_fm(re)%matrix, mos_next(im)%matrix, &
-                         one, mos_new(im)%matrix)
+            CALL parallel_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, propagator_fm(re)%matrix, mos_next(re)%matrix, &
+                               zero, mos_new(re)%matrix)
+            CALL parallel_gemm("N", "N", nao - ndep, nmo, nao - ndep, -one, propagator_fm(im)%matrix, mos_next(im)%matrix, &
+                               one, mos_new(re)%matrix)
+            CALL parallel_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, propagator_fm(im)%matrix, mos_next(re)%matrix, &
+                               zero, mos_new(im)%matrix)
+            CALL parallel_gemm("N", "N", nao - ndep, nmo, nao - ndep, one, propagator_fm(re)%matrix, mos_next(im)%matrix, &
+                               one, mos_new(im)%matrix)
          END DO
 
       END IF

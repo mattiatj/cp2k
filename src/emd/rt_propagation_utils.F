@@ -40,7 +40,6 @@ MODULE rt_propagation_utils
                                               cp_fm_to_fm_submat,&
                                               cp_fm_type
    USE cp_fm_vect,                      ONLY: cp_fm_vect_dealloc
-   USE cp_gemm_interface,               ONLY: cp_gemm
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_get_default_unit_nr,&
                                               cp_logger_type
@@ -62,6 +61,7 @@ MODULE rt_propagation_utils
    USE mathconstants,                   ONLY: one,&
                                               zero
    USE orbital_pointers,                ONLY: ncoset
+   USE parallel_gemm_api,               ONLY: parallel_gemm
    USE particle_types,                  ONLY: particle_type
    USE qs_density_matrices,             ONLY: calculate_density_matrix
    USE qs_dftb_matrices,                ONLY: build_dftb_overlap
@@ -720,8 +720,8 @@ CONTAINS
       DO ispin = 1, dft_control%nspins ! spins
          CALL cp_fm_get_info(coeffs(2*ispin)%matrix, ncol_global=nmo)
          DO j = 1, 2               ! real and imaginary part
-            CALL cp_gemm("T", "N", noo, nmo, nao, 1.0_dp, ymatrix, coeffs(2*(ispin - 1) + j)%matrix, 0.0_dp, &
-                         coeffs_ortho(2*(ispin - 1) + j)%matrix)
+            CALL parallel_gemm("T", "N", noo, nmo, nao, 1.0_dp, ymatrix, coeffs(2*(ispin - 1) + j)%matrix, 0.0_dp, &
+                               coeffs_ortho(2*(ispin - 1) + j)%matrix)
          END DO
       END DO
 
@@ -760,8 +760,8 @@ CONTAINS
       CPASSERT(ASSOCIATED(ymatrix))
 
       CALL cp_fm_get_info(coeffs, ncol_global=nmo)
-      CALL cp_gemm("T", "N", noo, nmo, nao, 1.0_dp, ymatrix, coeffs, 0.0_dp, &
-                   coeffs_ortho)
+      CALL parallel_gemm("T", "N", noo, nmo, nao, 1.0_dp, ymatrix, coeffs, 0.0_dp, &
+                         coeffs_ortho)
 
    END SUBROUTINE transform_to_co_coeffs_type
 
@@ -799,8 +799,8 @@ CONTAINS
       DO ispin = 1, dft_control%nspins ! spins
          CALL cp_fm_get_info(coeffs_ao(2*ispin)%matrix, ncol_global=nmo)
          DO j = 1, 2               ! real and imaginary part
-            CALL cp_gemm("N", "N", nao, nmo, noo, 1.0_dp, xmatrix, coeffs_ortho(2*(ispin - 1) + j)%matrix, 0.0_dp, &
-                         coeffs_ao(2*(ispin - 1) + j)%matrix)
+            CALL parallel_gemm("N", "N", nao, nmo, noo, 1.0_dp, xmatrix, coeffs_ortho(2*(ispin - 1) + j)%matrix, 0.0_dp, &
+                               coeffs_ao(2*(ispin - 1) + j)%matrix)
          END DO
       END DO
 
@@ -1102,7 +1102,7 @@ CONTAINS
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(rtp_control_type), INTENT(IN), POINTER        :: rtp_control
       TYPE(dbcsr_type), INTENT(IN), POINTER              :: dbcsr_matrix
-      TYPE(cp_fm_type), INTENT(OUT), POINTER             :: fm_matrix_red
+      TYPE(cp_fm_type), INTENT(OUT)                      :: fm_matrix_red
 
       INTEGER                                            :: nao, noo
       TYPE(cp_fm_type), POINTER                          :: work_fm

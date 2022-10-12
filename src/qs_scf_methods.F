@@ -424,8 +424,8 @@ CONTAINS
 
       CPASSERT((nao - ndep) .GE. nmo)
 
-      CALL cp_gemm("T", "N", nao, nao, nao, 1.0_dp, ortho, matrix_ks_fm, 0.0_dp, work)
-      CALL cp_gemm("N", "N", nao, nao, nao, 1.0_dp, work, ortho, 0.0_dp, matrix_ks_fm)
+      CALL parallel_gemm("T", "N", nao, nao, nao, 1.0_dp, ortho, matrix_ks_fm, 0.0_dp, work)
+      CALL parallel_gemm("N", "N", nao, nao, nao, 1.0_dp, work, ortho, 0.0_dp, matrix_ks_fm)
 
       IF (ndep .GT. 0) THEN
          ! set diagonal values to save large value
@@ -437,7 +437,7 @@ CONTAINS
       CALL choose_eigv_solver(matrix=matrix_ks_fm, eigenvectors=work, eigenvalues=mo_eigenvalues)
 
       ! Restore vectors C = U^(-1) * C*
-      CALL cp_gemm("N", "N", nao, nmo, (nao - ndep), 1.0_dp, ortho, work, 0.0_dp, mo_coeff)
+      CALL parallel_gemm("N", "N", nao, nmo, (nao - ndep), 1.0_dp, ortho, work, 0.0_dp, mo_coeff)
 
       CALL timestop(handle)
 

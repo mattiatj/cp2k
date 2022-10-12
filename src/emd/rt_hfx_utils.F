@@ -34,7 +34,8 @@ MODULE rt_hfx_utils
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_set,&
                                               qs_rho_type
-   USE rt_propagation_types,            ONLY: get_rtp
+   USE rt_propagation_types,            ONLY: get_rtp,&
+                                              rt_prop_type
 #include "../base/base_uses.f90"
 
    IMPLICIT NONE
@@ -54,24 +55,31 @@ CONTAINS
    SUBROUTINE rtp_hfx_rebuild(qs_env)
       TYPE(qs_environment_type), POINTER                 :: qs_env
 
+      INTEGER                                            :: nspins
       LOGICAL                                            :: need_h_im
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_ks_aux_im, matrix_s_aux, &
-                                                            rho_aux_ao_im
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_ks_aux_im, matrix_ks_co_im, &
+                                                            matrix_s, matrix_s_aux, rho_aux_ao_im, &
+                                                            rho_co_im
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-         POINTER                                         :: sab_aux
+         POINTER                                         :: sab_aux, sab_orb
       TYPE(qs_ks_env_type), POINTER                      :: ks_env
       TYPE(qs_rho_type), POINTER                         :: rho, rho_aux
+      TYPE(rt_prop_type), POINTER                        :: rtp
 
-      NULLIFY (ks_env, dft_control, rho)
+      NULLIFY (ks_env, dft_control, rho, rtp, matrix_s, sab_orb)
       NULLIFY (sab_aux, rho_aux, rho_aux_ao_im, matrix_ks_aux_im, matrix_s_aux)
 
       CALL get_qs_env(qs_env, &
                       ks_env=ks_env, &
                       dft_control=dft_control, &
-                      rho=rho)
+                      matrix_s=matrix_s, &
+                      rho=rho, &
+                      rtp=rtp, &
+                      sab_orb=sab_orb)
 
       need_h_im = dft_control%rtp_control%velocity_gauge
+      nspins = dft_control%nspins
 
       CALL rebuild_matrices_im_kp(qs_env, rho, ks_env, dft_control%nspins, dft_control%nimages, &
                                   rebuild_matrix_p=.TRUE., rebuild_matrix_ks=.TRUE., rebuild_matrix_h=need_h_im)

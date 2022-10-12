@@ -284,7 +284,7 @@ CONTAINS
                                      work=scf_env%scf_work2, &
                                      do_level_shift=do_level_shift, &
                                      level_shift=scf_control%level_shift, &
-                                     matrix_u_fm=matrix_u_fm, &
+                                     matrix_u_fm=scf_env%ortho_m1, &
                                      use_jacobi=use_jacobi, &
                                      jacobi_threshold=scf_control%diagonalization%jacobi_threshold)
             ELSEIF (scf_env%ortho_method == ortho_canon) THEN
