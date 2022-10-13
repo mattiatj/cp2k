@@ -491,6 +491,7 @@ CONTAINS
                                  "ORTHO_MATRIX-1")
             ELSE IF (scf_env%cholesky_method == cholesky_off) THEN
                IF (scf_env%ortho_method == ortho_canon) THEN
+                  ALLOCATE (scf_env%canon)
                   CALL cp_fm_create(scf_env%canon, &
                                     matrix_struct=ao_ao_fmstruct, &
                                     name="ORTHO CANON MATRIX")

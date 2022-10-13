@@ -616,7 +616,7 @@ CONTAINS
       REAL(kind=dp)                                      :: epseigval
       TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
       TYPE(cp_fm_struct_type), POINTER                   :: fm_struct_tmp
-      TYPE(cp_fm_type), POINTER                          :: mat_tmp, mat_tmp2, s_fm
+      TYPE(cp_fm_type)                                   :: mat_tmp, mat_tmp2, s_fm
       TYPE(cp_logger_type), POINTER                      :: logger
       TYPE(cp_para_env_type), POINTER                    :: para_env
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s
@@ -647,7 +647,9 @@ CONTAINS
       rtp_control => dft_control%rtp_control
       CALL cp_fm_create(s_fm, matrix_struct=fm_struct_tmp, name="overlap fm")
       CALL cp_fm_create(mat_tmp, matrix_struct=fm_struct_tmp, name="temporary fm")
-      IF (calc_trsfmatrices) CALL cp_fm_create(mat_tmp2, matrix_struct=fm_struct_tmp, name="temporary fm")
+      IF (calc_trsfmatrices) THEN
+         CALL cp_fm_create(mat_tmp2, matrix_struct=fm_struct_tmp, name="temporary fm")
+      END IF
       CALL cp_fm_struct_release(fm_struct_tmp)
 
       CALL copy_dbcsr_to_fm(matrix_s(1)%matrix, s_fm)
@@ -1103,7 +1105,7 @@ CONTAINS
       TYPE(rt_prop_type), POINTER                        :: rtp
       TYPE(rtp_control_type), INTENT(IN), POINTER        :: rtp_control
       TYPE(dbcsr_type), INTENT(IN), POINTER              :: dbcsr_matrix
-      TYPE(cp_fm_type), INTENT(OUT)                      :: fm_matrix_red
+      TYPE(cp_fm_type), INTENT(inOUT)                    :: fm_matrix_red
 
       INTEGER                                            :: nao, noo
       TYPE(cp_fm_type), POINTER                          :: work_fm

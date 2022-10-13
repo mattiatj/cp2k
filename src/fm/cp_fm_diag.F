@@ -1334,10 +1334,10 @@ CONTAINS
 ! **************************************************************************************************
    SUBROUTINE cp_fm_ortho_canon(smatrix, xmatrix, ndep, epseigval, ymatrix)
 
-      TYPE(cp_fm_type), POINTER                          :: smatrix, xmatrix
+      TYPE(cp_fm_type), INTENT(inout)                    :: smatrix, xmatrix
       INTEGER, INTENT(OUT)                               :: ndep
       REAL(kind=dp), INTENT(IN)                          :: epseigval
-      TYPE(cp_fm_type), OPTIONAL, POINTER                :: ymatrix
+      TYPE(cp_fm_type), OPTIONAL                         :: ymatrix
 
       CHARACTER(len=*), PARAMETER                        :: routineN = 'cp_fm_ortho_canon'
 

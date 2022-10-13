@@ -299,7 +299,10 @@ CONTAINS
                CPASSERT(.TRUE.)
                CALL dbcsr_deallocate_matrix(scf_env%ortho_dbcsr)
             END IF
-            IF (ASSOCIATED(scf_env%canon)) CALL cp_fm_release(scf_env%canon)
+            IF (ASSOCIATED(scf_env%canon)) THEN
+               CALL cp_fm_release(scf_env%canon)
+               DEALLOCATE (scf_env%canon)
+            END IF
             IF (ASSOCIATED(scf_env%buf1_dbcsr)) THEN
                ! we should not end up here, and give back using the pools
                CPASSERT(.TRUE.)

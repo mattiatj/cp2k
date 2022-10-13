@@ -267,13 +267,16 @@ CONTAINS
                                      template_fmstruct=ao_mo_fmstruct)
 
             NULLIFY (rtp%canon_ortho%xmatrix, rtp%canon_ortho%ymatrix)
+            ALLOCATE (rtp%canon_ortho%xmatrix)
             CALL cp_fm_create(rtp%canon_ortho%xmatrix, matrix_struct=tmp_fmstruct, name="xmatrix")
+            ALLOCATE (rtp%canon_ortho%ymatrix)
             CALL cp_fm_create(rtp%canon_ortho%ymatrix, matrix_struct=tmp_fmstruct, name="ymatrix")
             CALL cp_fm_struct_release(tmp_fmstruct)
 
             ! full matrix for work, if necessary
             NULLIFY (rtp%canon_ortho%work_fm)
             IF (ndep .NE. 0) THEN
+               ALLOCATE (rtp%canon_ortho%work_fm)
                CALL cp_fm_create(rtp%canon_ortho%work_fm, matrix_struct=rtp%ao_ao_fmstruct, name="work_fm")
             END IF
 
@@ -284,6 +287,8 @@ CONTAINS
             DO i = 1, nspin
                coeffs_fmstruct => mos(i)%mo_set%mo_coeff%matrix_struct
                DO j = 1, 2
+                  NULLIFY (rtp%canon_ortho%mos_ao(2*(i - 1) + j)%matrix)
+                  ALLOCATE (rtp%canon_ortho%mos_ao(2*(i - 1) + j)%matrix)
                   CALL cp_fm_create(rtp%canon_ortho%mos_ao(2*(i - 1) + j)%matrix, matrix_struct=coeffs_fmstruct, &
                                     name="mos_ao"//TRIM(ADJUSTL(cp_to_string(2*(i - 1) + j))))
                END DO
@@ -543,10 +548,13 @@ CONTAINS
       IF (ASSOCIATED(rtp%canon_ortho)) THEN
          IF (ASSOCIATED(rtp%canon_ortho%xmatrix)) &
             CALL cp_fm_release(rtp%canon_ortho%xmatrix)
+         DEALLOCATE (rtp%canon_ortho%xmatrix)
          IF (ASSOCIATED(rtp%canon_ortho%ymatrix)) &
             CALL cp_fm_release(rtp%canon_ortho%ymatrix)
+         DEALLOCATE (rtp%canon_ortho%ymatrix)
          IF (ASSOCIATED(rtp%canon_ortho%work_fm)) &
             CALL cp_fm_release(rtp%canon_ortho%work_fm)
+         DEALLOCATE (rtp%canon_ortho%work_fm)
          IF (ASSOCIATED(rtp%canon_ortho%xmatrix_dbcsr)) &
             CALL dbcsr_deallocate_matrix(rtp%canon_ortho%xmatrix_dbcsr)
          IF (ASSOCIATED(rtp%canon_ortho%ymatrix_dbcsr)) &
