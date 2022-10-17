@@ -546,15 +546,18 @@ CONTAINS
          DEALLOCATE (rtp%mos)
       END IF
       IF (ASSOCIATED(rtp%canon_ortho)) THEN
-         IF (ASSOCIATED(rtp%canon_ortho%xmatrix)) &
+         IF (ASSOCIATED(rtp%canon_ortho%xmatrix)) THEN
             CALL cp_fm_release(rtp%canon_ortho%xmatrix)
-         DEALLOCATE (rtp%canon_ortho%xmatrix)
-         IF (ASSOCIATED(rtp%canon_ortho%ymatrix)) &
+            DEALLOCATE (rtp%canon_ortho%xmatrix)
+         END IF
+         IF (ASSOCIATED(rtp%canon_ortho%ymatrix)) THEN
             CALL cp_fm_release(rtp%canon_ortho%ymatrix)
-         DEALLOCATE (rtp%canon_ortho%ymatrix)
-         IF (ASSOCIATED(rtp%canon_ortho%work_fm)) &
+            DEALLOCATE (rtp%canon_ortho%ymatrix)
+         END IF
+         IF (ASSOCIATED(rtp%canon_ortho%work_fm)) THEN
             CALL cp_fm_release(rtp%canon_ortho%work_fm)
-         DEALLOCATE (rtp%canon_ortho%work_fm)
+            DEALLOCATE (rtp%canon_ortho%work_fm)
+         END IF
          IF (ASSOCIATED(rtp%canon_ortho%xmatrix_dbcsr)) &
             CALL dbcsr_deallocate_matrix(rtp%canon_ortho%xmatrix_dbcsr)
          IF (ASSOCIATED(rtp%canon_ortho%ymatrix_dbcsr)) &
