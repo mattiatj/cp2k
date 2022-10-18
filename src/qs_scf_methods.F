@@ -122,7 +122,7 @@ CONTAINS
          my_p_mix = 1.0_dp
       END IF
 
-      iter_delta = 0.0_dp
+      IF (.NOT. my_invert) iter_delta = 0.0_dp
       CPASSERT(ASSOCIATED(p_mix_new))
       DO ic = 1, SIZE(p_mix_new, 2)
          DO ispin = 1, SIZE(p_mix_new, 1)
