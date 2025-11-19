@@ -83,10 +83,14 @@ MODULE qs_linres_module
                                               polar_operators,&
                                               polar_operators_local,&
                                               polar_operators_local_wannier
+                                              polar_operators_ao
    USE qs_linres_polar_utils,           ONLY: polar_env_init,&
                                               polar_polar,&
+                                              polar_polar_ao,&
                                               polar_print,&
-                                              polar_response
+                                              polar_print_ao,&
+                                              polar_response,&
+                                              polar_response_ao
    USE qs_linres_types,                 ONLY: &
         current_env_type, dcdr_env_type, epr_env_type, get_polar_env, issc_env_type, &
         linres_control_type, nmr_env_type, polar_env_type, vcd_env_type
@@ -767,13 +771,20 @@ CONTAINS
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(qs_p_env_type)                                :: p_env
-
+      
       CALL polar_env_init(qs_env)
-      CALL polar_operators(qs_env)
-      CALL polar_response(p_env, qs_env)
-      CALL polar_polar(qs_env)
-      CALL polar_print(qs_env)
+
+      IF (qs_env%polar_env%ao_solver) THEN
+         CALL polar_operators_ao(qs_env)
+         CALL polar_response_ao(qs_env)
+         CALL polar_polar_ao(qs_env)
+         CALL polar_print_ao(qs_env)
+      ELSE
+         CALL polar_operators(qs_env)
+         CALL polar_response(p_env, qs_env)
+         CALL polar_polar(qs_env)
+         CALL polar_print(qs_env)
+      END IF
 
    END SUBROUTINE polar_linres
-
 END MODULE qs_linres_module

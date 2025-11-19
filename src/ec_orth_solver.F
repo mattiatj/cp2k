@@ -19,7 +19,8 @@ MODULE ec_orth_solver
    USE cp_dbcsr_api,                    ONLY: &
         dbcsr_add, dbcsr_copy, dbcsr_create, dbcsr_desymmetrize, dbcsr_filter, dbcsr_finalize, &
         dbcsr_get_info, dbcsr_multiply, dbcsr_p_type, dbcsr_release, dbcsr_scale, dbcsr_set, &
-        dbcsr_transposed, dbcsr_type, dbcsr_type_no_symmetry
+        dbcsr_transposed, dbcsr_type, dbcsr_type_no_symmetry, dbcsr_type_antisymmetric, dbcsr_init_p,&
+        dbcsr_print
    USE cp_dbcsr_contrib,                ONLY: dbcsr_add_on_diag,&
                                               dbcsr_checksum,&
                                               dbcsr_dot
@@ -63,6 +64,7 @@ MODULE ec_orth_solver
    USE qs_linres_kernel,                ONLY: apply_hfx,&
                                               apply_xc_admm
    USE qs_linres_types,                 ONLY: linres_control_type
+   USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
    USE qs_p_env_methods,                ONLY: p_env_check_i_alloc,&
                                               p_env_finish_kpp1,&
                                               p_env_update_rho
@@ -82,7 +84,7 @@ MODULE ec_orth_solver
 
    ! Public subroutines
 
-   PUBLIC :: ec_response_ao
+   PUBLIC :: ec_response_ao, ec_response_ao_vel
 
 CONTAINS
 
@@ -846,6 +848,533 @@ CONTAINS
    END SUBROUTINE ec_response_ao
 
 ! **************************************************************************************************
+!> \brief AO-based conjugate gradient linear response solver.
+!>        In goes the right hand side B of the equation AZ=B, and the linear transformation of the
+!>        Hessian matrix A on trial matrices is iteratively solved. Result are
+!>        the response density matrix_pz, and the energy-weighted response density matrix_wz.
+!>
+!> \param qs_env ...
+!> \param p_env ...
+!> \param matrix_hz Right hand-side of linear response equation
+!> \param matrix_pz Response density
+!> \param matrix_wz Energy-weighted response density matrix
+!> \param iounit ...
+!> \param should_stop ...
+!>
+!> \date    01.2020
+!> \author  Fabian Belleflamme
+! **************************************************************************************************
+   SUBROUTINE ec_response_ao_vel(qs_env, p_env, matrix_hz, matrix_pz, matrix_wz, iounit, should_stop)
+
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(qs_p_env_type), POINTER                       :: p_env
+      TYPE(dbcsr_p_type), DIMENSION(:), INTENT(IN), &
+         POINTER                                         :: matrix_hz
+      TYPE(dbcsr_p_type), DIMENSION(:), INTENT(INOUT), &
+         POINTER                                         :: matrix_pz, matrix_wz
+      INTEGER, INTENT(IN)                                :: iounit
+      LOGICAL, INTENT(OUT)                               :: should_stop
+
+      CHARACTER(len=*), PARAMETER                        :: routineN = 'ec_response_ao'
+
+      INTEGER                                            :: handle, i, ispin, max_iter_lanczos, nao, &
+                                                            nspins, s_sqrt_method, s_sqrt_order
+      LOGICAL                                            :: restart
+      REAL(KIND=dp)                                      :: eps_filter, eps_lanczos, focc, &
+                                                            min_shift, norm_res, old_conv, shift, &
+                                                            t1, t2
+      REAL(KIND=dp), DIMENSION(:), POINTER               :: alpha, beta, new_norm, norm_cA, norm_rr, &
+                                                            tr_rz00
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER :: ksmat, matrix_Ax, matrix_cg, matrix_cg_z, &
+         matrix_ks, matrix_nsc, matrix_p, matrix_res, matrix_s, matrix_z, matrix_z0, rho_ao, temp
+      TYPE(dbcsr_type)                                   :: matrix_s_sqrt, matrix_s_sqrt_inv, &
+                                                            matrix_tmp
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(linres_control_type), POINTER                 :: linres_control
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+      POINTER                                            :: sab_orb
+      TYPE(qs_rho_type), POINTER                         :: rho
+      TYPE(section_vals_type), POINTER                   :: solver_section
+
+      CALL timeset(routineN, handle)
+
+      CPASSERT(ASSOCIATED(qs_env))
+      CPASSERT(ASSOCIATED(matrix_hz))
+      CPASSERT(ASSOCIATED(matrix_pz))
+      CPASSERT(ASSOCIATED(matrix_wz))
+
+      NULLIFY (dft_control, ksmat, matrix_s, linres_control, rho, sab_orb)
+
+      t1 = m_walltime()
+
+      CALL get_qs_env(qs_env=qs_env, &
+                      dft_control=dft_control, &
+                      linres_control=linres_control, &
+                      matrix_ks=ksmat, &
+                      matrix_s=matrix_s, &
+                      sab_orb=sab_orb, &
+                      rho=rho)
+      nspins = dft_control%nspins
+
+      CALL dbcsr_get_info(matrix_s(1)%matrix, nfullrows_total=nao)
+
+      solver_section => section_vals_get_subs_vals(qs_env%input, "DFT%ENERGY_CORRECTION%RESPONSE_SOLVER")
+      CALL section_vals_val_get(solver_section, "S_SQRT_METHOD", i_val=s_sqrt_method)
+      CALL section_vals_val_get(solver_section, "S_SQRT_ORDER", i_val=s_sqrt_order)
+      CALL section_vals_val_get(solver_section, "EPS_LANCZOS", r_val=eps_lanczos)
+      CALL section_vals_val_get(solver_section, "MAX_ITER_LANCZOS", i_val=max_iter_lanczos)
+
+      eps_filter = linres_control%eps_filter
+      
+      CALL qs_rho_get(rho, rho_ao=rho_ao)
+
+      ALLOCATE (alpha(nspins), beta(nspins), new_norm(nspins), norm_cA(nspins), norm_rr(nspins))
+      ALLOCATE (tr_rz00(nspins))
+
+      ! local matrix P, KS, and NSC
+      ! to bring into orthogonal basis
+      NULLIFY (matrix_p, matrix_ks, matrix_nsc)
+      CALL dbcsr_allocate_matrix_set(matrix_p, nspins)
+      CALL dbcsr_allocate_matrix_set(matrix_ks, nspins)
+      CALL dbcsr_allocate_matrix_set(matrix_nsc, nspins)
+      DO ispin = 1, nspins
+         ALLOCATE (matrix_p(ispin)%matrix)
+         ALLOCATE (matrix_ks(ispin)%matrix)
+         ALLOCATE (matrix_nsc(ispin)%matrix)
+         CALL dbcsr_create(matrix_p(ispin)%matrix, name="P_IN ORTHO", &
+                           template=ksmat(1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+         CALL dbcsr_create(matrix_ks(ispin)%matrix, name="KS_IN ORTHO", &
+                           template=ksmat(1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+         CALL dbcsr_create(matrix_nsc(ispin)%matrix, name="NSC IN ORTHO", &
+                           template=ksmat(1)%matrix, &
+                           matrix_type=dbcsr_type_antisymmetric)
+
+         CALL dbcsr_desymmetrize(rho_ao(ispin)%matrix, matrix_p(ispin)%matrix)
+         CALL dbcsr_desymmetrize(ksmat(ispin)%matrix, matrix_ks(ispin)%matrix)
+         CALL dbcsr_desymmetrize(matrix_hz(ispin)%matrix, matrix_nsc(ispin)%matrix)
+      END DO
+
+      ! Scale matrix_p by factor 1/2 in closed-shell
+      IF (nspins == 1) CALL dbcsr_scale(matrix_p(1)%matrix, 0.5_dp)
+
+      ! Transform P, KS, and Harris kernel matrix into Orthonormal basis
+      CALL dbcsr_create(matrix_s_sqrt, template=matrix_s(1)%matrix, &
+                        matrix_type=dbcsr_type_no_symmetry)
+      CALL dbcsr_create(matrix_s_sqrt_inv, template=matrix_s(1)%matrix, &
+                        matrix_type=dbcsr_type_no_symmetry)
+
+      SELECT CASE (s_sqrt_method)
+      CASE (ls_s_sqrt_proot)
+         CALL matrix_sqrt_proot(matrix_s_sqrt, matrix_s_sqrt_inv, &
+                                matrix_s(1)%matrix, eps_filter, &
+                                s_sqrt_order, eps_lanczos, max_iter_lanczos, symmetrize=.TRUE.)
+      CASE (ls_s_sqrt_ns)
+         CALL matrix_sqrt_Newton_Schulz(matrix_s_sqrt, matrix_s_sqrt_inv, &
+                                        matrix_s(1)%matrix, eps_filter, &
+                                        s_sqrt_order, eps_lanczos, max_iter_lanczos)
+      CASE DEFAULT
+         CPABORT("Unknown sqrt method.")
+      END SELECT
+
+      ! Transform into orthonormal Lowdin basis
+      DO ispin = 1, nspins
+         CALL transform_m_orth(matrix_p(ispin)%matrix, matrix_s_sqrt, eps_filter)
+         CALL transform_m_orth(matrix_ks(ispin)%matrix, matrix_s_sqrt_inv, eps_filter)
+         ! IF (.NOT. linres_control%do_kernel) THEN
+            CALL transform_m_orth_img_ptrb(matrix_nsc(ispin)%matrix, matrix_s_sqrt_inv, eps_filter)
+         ! ELSE
+            ! CALL transform_m_orth(matrix_nsc(ispin)%matrix, matrix_s_sqrt_inv, eps_filter)
+         ! END IF  
+      END DO
+
+      !----------------------------------------
+      ! Create non-symmetric work matrices: Ax, cg, res
+      ! Content of Ax, cg, cg_z, res, z0 anti-symmetric
+      ! Content of z symmetric
+      !----------------------------------------
+
+      CALL dbcsr_create(matrix_tmp, template=matrix_s(1)%matrix, matrix_type=dbcsr_type_no_symmetry)
+
+      NULLIFY (matrix_Ax, matrix_cg, matrix_cg_z, matrix_res, matrix_z, matrix_z0, temp)
+      CALL dbcsr_allocate_matrix_set(matrix_Ax, nspins)
+      CALL dbcsr_allocate_matrix_set(matrix_cg, nspins)
+      CALL dbcsr_allocate_matrix_set(matrix_cg_z, nspins)
+      CALL dbcsr_allocate_matrix_set(matrix_res, nspins)
+      CALL dbcsr_allocate_matrix_set(matrix_z, nspins)
+      CALL dbcsr_allocate_matrix_set(matrix_z0, nspins)
+      CALL dbcsr_allocate_matrix_set(temp, nspins)
+
+      DO ispin = 1, nspins
+         ALLOCATE (matrix_Ax(ispin)%matrix)
+         ALLOCATE (matrix_cg(ispin)%matrix)
+         ALLOCATE (matrix_cg_z(ispin)%matrix)
+         ALLOCATE (matrix_res(ispin)%matrix)
+         ALLOCATE (matrix_z(ispin)%matrix)
+         ALLOCATE (matrix_z0(ispin)%matrix)
+         CALL dbcsr_create(matrix_Ax(ispin)%matrix, name="linop MATRIX", &
+                           template=matrix_s(1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+         CALL dbcsr_create(matrix_cg(ispin)%matrix, name="TRIAL MATRIX", &
+                           template=matrix_s(1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+         CALL dbcsr_create(matrix_cg_z(ispin)%matrix, name="MATRIX CG-Z", &
+                           template=matrix_s(1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+         CALL dbcsr_create(matrix_res(ispin)%matrix, name="RESIDUE", &
+                           template=matrix_s(1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+                           
+         CALL dbcsr_init_p(temp(ispin)%matrix)
+         CALL dbcsr_create(temp(ispin)%matrix, template=ksmat(1)%matrix, &
+                           matrix_type=dbcsr_type_antisymmetric)
+         CALL cp_dbcsr_alloc_block_from_nbl(temp(ispin)%matrix, sab_orb)
+         CALL dbcsr_set(temp(ispin)%matrix, 0._dp)
+
+         CALL dbcsr_init_p(matrix_z(ispin)%matrix)
+         CALL dbcsr_create(matrix_z(ispin)%matrix, template=ksmat(1)%matrix, &
+                           matrix_type=dbcsr_type_antisymmetric)
+         CALL cp_dbcsr_alloc_block_from_nbl(matrix_z(ispin)%matrix, sab_orb)
+         CALL dbcsr_set(matrix_z(ispin)%matrix, 0._dp) 
+         CALL dbcsr_desymmetrize(temp(ispin)%matrix, matrix_z(ispin)%matrix)
+
+         CALL dbcsr_create(matrix_z0(ispin)%matrix, name="p after precondi-Matrix", &
+                           template=matrix_s(1)%matrix, &
+                           matrix_type=dbcsr_type_no_symmetry)
+      END DO
+
+      !----------------------------------------
+      ! Get righ-hand-side operators
+      !----------------------------------------
+
+      ! Spin factor
+      focc = -2.0_dp
+      IF (nspins == 1) focc = -4.0_dp
+
+      ! E^[1]_Harris = -4*G[\delta P]*Pin - Pin*G[\delta P] = -4*[G[\delta P], Pin]
+      CALL commutator(matrix_nsc, matrix_p, matrix_res, eps_filter, .FALSE., alpha=focc)
+
+      ! Initial guess cg_Z
+      DO ispin = 1, nspins
+         CALL dbcsr_copy(matrix_cg_z(ispin)%matrix, matrix_res(ispin)%matrix)
+      END DO
+
+      ! Projector on trial matrix
+      CALL projector(qs_env, matrix_p, matrix_cg_z, eps_filter)
+
+      ! Ax0
+      CALL build_hessian_op(qs_env=qs_env, &
+                            p_env=p_env, &
+                            matrix_ks=matrix_ks, &
+                            matrix_p=matrix_p, &   ! p
+                            matrix_s_sqrt_inv=matrix_s_sqrt_inv, &
+                            matrix_cg=matrix_cg_z, & ! cg
+                            matrix_Ax=matrix_Ax, &
+                            eps_filter=eps_filter)
+
+      ! r_0 = b - Ax0
+      DO ispin = 1, nspins
+         CALL dbcsr_add(matrix_res(ispin)%matrix, matrix_Ax(ispin)%matrix, 1.0_dp, -1.0_dp)
+      END DO
+
+      ! Matrix projector T
+      CALL projector(qs_env, matrix_p, matrix_res, eps_filter)
+
+      ! Preconditioner
+      linres_control%flag = ""
+      ! print *, linres_control%preconditioner_type, polar%preconditioner_type
+      IF (linres_control%preconditioner_type == precond_mlp) THEN
+         ! M * z_0 = r_0
+         ! Conjugate gradient returns z_0
+         CALL preconditioner(qs_env=qs_env, &
+                             matrix_ks=matrix_ks, &
+                             matrix_p=matrix_p, &
+                             matrix_rhs=matrix_res, &
+                             matrix_cg_z=matrix_z0, &
+                             eps_filter=eps_filter, &
+                             iounit=iounit)
+         linres_control%flag = "PCG-AO"
+      ELSE
+         ! z_0 = r_0
+         DO ispin = 1, nspins
+            CALL dbcsr_copy(matrix_z0(ispin)%matrix, matrix_res(ispin)%matrix)
+            linres_control%flag = "CG-AO"
+         END DO
+      END IF
+
+      norm_res = 0.0_dp
+
+      DO ispin = 1, nspins
+         ! cg = p_0 = z_0
+         CALL dbcsr_copy(matrix_cg(ispin)%matrix, matrix_z0(ispin)%matrix)
+
+         ! Tr(r_0 * z_0)
+         CALL dbcsr_dot(matrix_res(ispin)%matrix, matrix_cg(ispin)%matrix, norm_rr(ispin))
+
+         IF (norm_rr(ispin) .LT. 0.0_dp) CPABORT("norm_rr < 0")
+         norm_res = MAX(norm_res, ABS(norm_rr(ispin)/REAL(nao, dp)))
+      END DO
+
+      ! eigenvalue shifting
+      min_shift = 0.0_dp
+      old_conv = norm_rr(1)
+      shift = MIN(10.0_dp, MAX(min_shift, 0.05_dp*old_conv))
+      old_conv = 100.0_dp
+
+      ! header
+      IF (iounit > 0) THEN
+         WRITE (iounit, "(/,T3,A,T16,A,T25,A,T38,A,T52,A,/,T3,A)") &
+            "Iteration", "Method", "Stepsize", "Convergence", "Time", &
+            REPEAT("-", 80)
+      END IF
+
+      alpha(:) = 0.0_dp
+      restart = .FALSE.
+      should_stop = .FALSE.
+      linres_control%converged = .FALSE.
+
+      ! start iteration
+      iteration: DO i = 1, linres_control%max_iter
+
+         ! Convergence criteria
+         ! default for eps 10E-6 in MO_linres
+         IF (norm_res .LT. linres_control%eps) THEN
+            linres_control%converged = .TRUE.
+         END IF
+
+         t2 = m_walltime()
+         IF (i .EQ. 1 .OR. MOD(i, 1) .EQ. 0 .OR. linres_control%converged &
+             .OR. restart .OR. should_stop) THEN
+            IF (iounit > 0) THEN
+               WRITE (iounit, "(T5,I5,T18,A3,T28,L1,T38,1E8.2,T48,F16.10,T68,F8.2)") &
+                  i, linres_control%flag, restart, MAXVAL(alpha), norm_res, t2 - t1
+               CALL m_flush(iounit)
+            END IF
+         END IF
+         IF (linres_control%converged) THEN
+            IF (iounit > 0) THEN
+               WRITE (iounit, "(/,T2,A,I4,A,/)") "The linear solver converged in ", i, " iterations."
+               CALL m_flush(iounit)
+            END IF
+            EXIT iteration
+         ELSE IF (should_stop) THEN
+            IF (iounit > 0) THEN
+               WRITE (iounit, "(/,T2,A,I4,A,/)") "The linear solver did NOT converge! External stop"
+               CALL m_flush(iounit)
+            END IF
+            EXIT iteration
+         END IF
+
+         ! Max number of iteration reached
+         IF (i == linres_control%max_iter) THEN
+            IF (iounit > 0) THEN
+               WRITE (iounit, "(/,T2,A/)") &
+                  "The linear solver didnt converge! Maximum number of iterations reached."
+               CALL m_flush(iounit)
+            END IF
+            linres_control%converged = .FALSE.
+         END IF
+
+         ! Hessian Ax = [F,B] + [G(B),P]
+         CALL build_hessian_op(qs_env=qs_env, &
+                               p_env=p_env, &
+                               matrix_ks=matrix_ks, &
+                               matrix_p=matrix_p, &   ! p
+                               matrix_s_sqrt_inv=matrix_s_sqrt_inv, &
+                               matrix_cg=matrix_cg, & ! cg
+                               matrix_Ax=matrix_Ax, &
+                               eps_filter=eps_filter)
+
+         ! Matrix projector T
+         CALL projector(qs_env, matrix_p, matrix_Ax, eps_filter)
+
+         DO ispin = 1, nspins
+
+            CALL dbcsr_filter(matrix_Ax(ispin)%matrix, eps_filter)
+            ! norm_cA = tr(Ap_j * p_j)
+            CALL dbcsr_dot(matrix_cg(ispin)%matrix, matrix_Ax(ispin)%matrix, norm_cA(ispin))
+
+            IF (norm_cA(ispin) .LT. 0.0_dp) THEN
+
+               ! Recalculate w/o preconditioner
+               IF (i > 1) THEN
+                  ! p = -z + beta*p
+                  CALL dbcsr_add(matrix_cg(ispin)%matrix, matrix_z0(ispin)%matrix, &
+                                 beta(ispin), -1.0_dp)
+                  CALL dbcsr_dot(matrix_res(ispin)%matrix, matrix_res(ispin)%matrix, new_norm(ispin))
+                  beta(ispin) = new_norm(ispin)/tr_rz00(ispin)
+                  CALL dbcsr_add(matrix_cg(ispin)%matrix, matrix_res(ispin)%matrix, &
+                                 beta(ispin), 1.0_dp)
+                  norm_rr(ispin) = new_norm(ispin)
+               ELSE
+                  CALL dbcsr_copy(matrix_res(ispin)%matrix, matrix_cg(ispin)%matrix)
+                  CALL dbcsr_dot(matrix_res(ispin)%matrix, matrix_res(ispin)%matrix, norm_rr(ispin))
+               END IF
+
+               CALL build_hessian_op(qs_env=qs_env, &
+                                     p_env=p_env, &
+                                     matrix_ks=matrix_ks, &
+                                     matrix_p=matrix_p, &   ! p
+                                     matrix_s_sqrt_inv=matrix_s_sqrt_inv, &
+                                     matrix_cg=matrix_cg, & ! cg
+                                     matrix_Ax=matrix_Ax, &
+                                     eps_filter=eps_filter)
+
+               ! Matrix projector T
+               CALL projector(qs_env, matrix_p, matrix_Ax, eps_filter)
+
+               CALL dbcsr_dot(matrix_cg(ispin)%matrix, matrix_Ax(ispin)%matrix, norm_cA(ispin))
+
+               CPABORT("tr(Ap_j*p_j) < 0")
+               IF (abnormal_value(norm_cA(ispin))) &
+                  CPABORT("Preconditioner: Tr[Ap_j*p_j] is an abnormal value (NaN/Inf)")
+
+            END IF
+
+         END DO
+
+         DO ispin = 1, nspins
+            ! Determine step-size
+            IF (norm_cA(ispin) .LT. linres_control%eps) THEN
+               alpha(ispin) = 1.0_dp
+            ELSE
+               alpha(ispin) = norm_rr(ispin)/norm_cA(ispin)
+            END IF
+
+            ! x_j+1 = x_j + alpha*p_j
+            ! save response-denisty of this iteration
+            CALL dbcsr_add(matrix_cg_z(ispin)%matrix, matrix_cg(ispin)%matrix, 1.0_dp, alpha(ispin))
+         END DO
+
+         ! need to recompute the residue
+         restart = .FALSE.
+         IF (MOD(i, linres_control%restart_every) .EQ. 0) THEN
+            !
+            ! r_j+1 = b - A * x_j+1
+            CALL build_hessian_op(qs_env=qs_env, &
+                                  p_env=p_env, &
+                                  matrix_ks=matrix_ks, &
+                                  matrix_p=matrix_p, &
+                                  matrix_s_sqrt_inv=matrix_s_sqrt_inv, &
+                                  matrix_cg=matrix_cg_z, & ! cg
+                                  matrix_Ax=matrix_Ax, &
+                                  eps_filter=eps_filter)
+            ! b
+            CALL commutator(matrix_nsc, matrix_p, matrix_res, eps_filter, .FALSE., alpha=focc)
+                                             
+            DO ispin = 1, nspins
+               CALL dbcsr_add(matrix_res(ispin)%matrix, matrix_Ax(ispin)%matrix, 1.0_dp, -1.0_dp)
+            END DO
+
+            CALL projector(qs_env, matrix_p, matrix_res, eps_filter)
+            !
+            restart = .TRUE.
+         ELSE
+            ! proj Ap onto the virtual subspace
+            CALL projector(qs_env, matrix_p, matrix_Ax, eps_filter)
+            !
+            ! r_j+1 = r_j - alpha * Ap_j
+            DO ispin = 1, nspins
+               CALL dbcsr_add(matrix_res(ispin)%matrix, matrix_Ax(ispin)%matrix, 1.0_dp, -alpha(ispin))
+            END DO
+            restart = .FALSE.
+         END IF
+
+         ! Preconditioner
+         linres_control%flag = ""
+         IF (linres_control%preconditioner_type == precond_mlp) THEN
+            ! M * z_j+1 = r_j+1
+            ! Conjugate gradient returns z_j+1
+            CALL preconditioner(qs_env=qs_env, &
+                                matrix_ks=matrix_ks, &
+                                matrix_p=matrix_p, &
+                                matrix_rhs=matrix_res, &
+                                matrix_cg_z=matrix_z0, &
+                                eps_filter=eps_filter, &
+                                iounit=iounit)
+            linres_control%flag = "PCG-AO"
+         ELSE
+            DO ispin = 1, nspins
+               CALL dbcsr_copy(matrix_z0(ispin)%matrix, matrix_res(ispin)%matrix)
+            END DO
+            linres_control%flag = "CG-AO"
+         END IF
+
+         norm_res = 0.0_dp
+
+         DO ispin = 1, nspins
+            ! Tr[r_j+1*z_j+1]
+            CALL dbcsr_dot(matrix_res(ispin)%matrix, matrix_z0(ispin)%matrix, new_norm(ispin))
+            IF (new_norm(ispin) .LT. 0.0_dp) CPABORT("tr(r_j+1*z_j+1) < 0")
+            IF (abnormal_value(new_norm(ispin))) &
+               CPABORT("Preconditioner: Tr[r_j+1*z_j+1] is an abnormal value (NaN/Inf)")
+            norm_res = MAX(norm_res, new_norm(ispin)/REAL(nao, dp))
+
+            IF (norm_rr(ispin) .LT. linres_control%eps .OR. new_norm(ispin) .LT. linres_control%eps) THEN
+               beta(ispin) = 0.0_dp
+               linres_control%converged = .TRUE.
+            ELSE
+               beta(ispin) = new_norm(ispin)/norm_rr(ispin)
+            END IF
+
+            ! update new search vector (matrix cg)
+            ! Here: cg_j+1 = z_j+1 + beta*cg_j
+            CALL dbcsr_add(matrix_cg(ispin)%matrix, matrix_z0(ispin)%matrix, beta(ispin), 1.0_dp)
+            CALL dbcsr_filter(matrix_cg(ispin)%matrix, eps_filter)
+
+            tr_rz00(ispin) = norm_rr(ispin)
+            norm_rr(ispin) = new_norm(ispin)
+         END DO
+
+         ! Can we exit the loop?
+         CALL external_control(should_stop, "LS_SOLVER", target_time=qs_env%target_time, &
+                               start_time=qs_env%start_time)
+
+      END DO iteration
+
+      ! Matrix projector
+      CALL projector(qs_env, matrix_p, matrix_cg_z, eps_filter)
+
+      ! Z = [cg_z,P]
+      CALL commutator(matrix_cg_z, matrix_p, matrix_z, eps_filter, .FALSE., alpha=0.5_dp)
+
+      DO ispin = 1, nspins
+         ! Transform Z-matrix back into non-orthogonal basis
+         CALL transform_m_orth_img_ptrb(matrix_z(ispin)%matrix, matrix_s_sqrt_inv, eps_filter)
+
+         ! Export Z-Matrix
+         CALL dbcsr_copy(matrix_pz(ispin)%matrix, matrix_z(ispin)%matrix, keep_sparsity=.TRUE.)
+      END DO
+
+      ! Calculate energy-weighted response density matrix
+      ! AO: Wz = 0.5*(Z*KS*P + P*KS*Z)
+      CALL ec_wz_matrix(qs_env, matrix_pz, matrix_wz, eps_filter)
+
+      ! Release matrices
+      CALL dbcsr_release(matrix_tmp)
+
+      CALL dbcsr_release(matrix_s_sqrt)
+      CALL dbcsr_release(matrix_s_sqrt_inv)
+
+      CALL dbcsr_deallocate_matrix_set(matrix_p)
+      CALL dbcsr_deallocate_matrix_set(matrix_ks)
+      CALL dbcsr_deallocate_matrix_set(matrix_nsc)
+      CALL dbcsr_deallocate_matrix_set(matrix_z)
+      CALL dbcsr_deallocate_matrix_set(matrix_Ax)
+      CALL dbcsr_deallocate_matrix_set(matrix_res)
+      CALL dbcsr_deallocate_matrix_set(temp)
+      CALL dbcsr_deallocate_matrix_set(matrix_cg)
+      CALL dbcsr_deallocate_matrix_set(matrix_cg_z)
+      CALL dbcsr_deallocate_matrix_set(matrix_z0)
+
+      DEALLOCATE (alpha, beta, new_norm, norm_cA, norm_rr)
+      DEALLOCATE (tr_rz00)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE ec_response_ao_vel   
+! **************************************************************************************************
 !> \brief Compute matrix_wz as needed for the forces
 !>        Wz = 0.5*(Z*KS*P + P*KS*Z) (closed-shell)
 !> \param qs_env ...
@@ -1017,6 +1546,7 @@ CONTAINS
       REAL(KIND=dp)                                      :: chksum
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_b, rho1_ao
       TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(linres_control_type), POINTER                 :: linres_control
       TYPE(mp_para_env_type), POINTER                    :: para_env
       TYPE(qs_rho_type), POINTER                         :: rho
 
@@ -1028,9 +1558,12 @@ CONTAINS
       CPASSERT(ASSOCIATED(matrix_cg))
       CPASSERT(ASSOCIATED(matrix_Ax))
 
+      NULLIFY (linres_control)
+
       CALL get_qs_env(qs_env=qs_env, &
                       dft_control=dft_control, &
                       para_env=para_env, &
+                      linres_control=linres_control,&
                       rho=rho)
       nspins = dft_control%nspins
 
@@ -1046,50 +1579,53 @@ CONTAINS
       ! Build uncoupled term of Hessian linear transformation
       CALL hessian_op1(matrix_ks, matrix_p, matrix_cg, matrix_b, matrix_Ax, eps_filter)
 
-      ! Avoid the buildup of noisy blocks
-      DO ispin = 1, nspins
-         CALL dbcsr_filter(matrix_b(ispin)%matrix, eps_filter)
-      END DO
+      IF (linres_control%do_kernel) THEN
 
-      chksum = 0.0_dp
-      DO ispin = 1, nspins
-         chksum = chksum + dbcsr_checksum(matrix_b(ispin)%matrix)
-      END DO
-
-      ! skip the kernel if the DM is very small
-      IF (chksum > 1.0E-14_dp) THEN
-
-         ! Bring matrix B as density on grid
-
-         ! prepare perturbation environment
-         CALL p_env_check_i_alloc(p_env, qs_env)
-
-         ! Get response density matrix
-         CALL qs_rho_get(p_env%rho1, rho_ao=rho1_ao)
-
+         ! Avoid the buildup of noisy blocks
          DO ispin = 1, nspins
-            ! Transform B into NON-ortho basis for collocation
-            CALL transform_m_orth(matrix_b(ispin)%matrix, matrix_s_sqrt_inv, eps_filter)
-            ! Filter
             CALL dbcsr_filter(matrix_b(ispin)%matrix, eps_filter)
-            ! Keep symmetry of density matrix
-            CALL dbcsr_copy(rho1_ao(ispin)%matrix, matrix_b(ispin)%matrix, keep_sparsity=.TRUE.)
-            CALL dbcsr_copy(p_env%p1(ispin)%matrix, matrix_b(ispin)%matrix, keep_sparsity=.TRUE.)
          END DO
 
-         ! Updates densities on grid wrt density matrix
-         CALL p_env_update_rho(p_env, qs_env)
-
+         chksum = 0.0_dp
          DO ispin = 1, nspins
-            CALL dbcsr_set(p_env%kpp1(ispin)%matrix, 0.0_dp)
-            IF (ASSOCIATED(p_env%kpp1_admm)) CALL dbcsr_set(p_env%kpp1_admm(ispin)%matrix, 0.0_dp)
+            chksum = chksum + dbcsr_checksum(matrix_b(ispin)%matrix)
          END DO
 
-         ! Calculate kernel
-         ! Ax = F*B - B*F + G(B)*P - P*G(B)
-         !                               IN/OUT     IN        IN                 IN
-         CALL hessian_op2(qs_env, p_env, matrix_Ax, matrix_p, matrix_s_sqrt_inv, eps_filter)
+         ! skip the kernel if the DM is very small
+         IF (chksum .GT. 1.0E-14_dp) THEN
 
+            ! Bring matrix B as density on grid
+
+            ! prepare perturbation environment
+            CALL p_env_check_i_alloc(p_env, qs_env)
+
+            ! Get response density matrix
+            CALL qs_rho_get(p_env%rho1, rho_ao=rho1_ao)
+
+            DO ispin = 1, nspins
+               ! Transform B into NON-ortho basis for collocation
+               CALL transform_m_orth(matrix_b(ispin)%matrix, matrix_s_sqrt_inv, eps_filter)
+               ! Filter
+               CALL dbcsr_filter(matrix_b(ispin)%matrix, eps_filter)
+               ! Keep symmetry of density matrix
+               CALL dbcsr_copy(rho1_ao(ispin)%matrix, matrix_b(ispin)%matrix, keep_sparsity=.TRUE.)
+               CALL dbcsr_copy(p_env%p1(ispin)%matrix, matrix_b(ispin)%matrix, keep_sparsity=.TRUE.)
+            END DO
+
+            ! Updates densities on grid wrt density matrix
+            CALL p_env_update_rho(p_env, qs_env)
+
+            DO ispin = 1, nspins
+               CALL dbcsr_set(p_env%kpp1(ispin)%matrix, 0.0_dp)
+               IF (ASSOCIATED(p_env%kpp1_admm)) CALL dbcsr_set(p_env%kpp1_admm(ispin)%matrix, 0.0_dp)
+            END DO
+
+            ! Calculate kernel
+            ! Ax = F*B - B*F + G(B)*P - P*G(B)
+            !                               IN/OUT     IN        IN                 IN
+            CALL hessian_op2(qs_env, p_env, matrix_Ax, matrix_p, matrix_s_sqrt_inv, eps_filter)
+
+         END IF
       END IF
 
       CALL dbcsr_deallocate_matrix_set(matrix_b)
@@ -1516,4 +2052,46 @@ CONTAINS
 
    END SUBROUTINE transform_m_orth
 
+! **************************************************************************************************
+!> \brief performs a tranformation of a matrix back to/into orthonormal basis
+!>        in case of P a scaling of 0.5 has to be applied for closed shell case
+!> \param matrix       matrix to be transformed
+!> \param matrix_trafo transformation matrix
+!> \param eps_filter   filtering threshold for sparse matrices
+!> \par History
+!>       2012.05 created [Florian Schiffmann]
+!> \author Florian Schiffmann
+!>
+! **************************************************************************************************
+
+   SUBROUTINE transform_m_orth_img_ptrb(matrix, matrix_trafo, eps_filter)
+      TYPE(dbcsr_type)                                   :: matrix, matrix_trafo
+      REAL(KIND=dp)                                      :: eps_filter
+
+      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'transform_m_orth'
+
+      INTEGER                                            :: handle
+      TYPE(dbcsr_type)                                   :: matrix_tmp, matrix_work
+
+      CALL timeset(routineN, handle)
+      ! CPASSERT(ASSOCIATED(matrix))
+
+      CALL dbcsr_create(matrix_work, template=matrix, matrix_type=dbcsr_type_no_symmetry)
+      CALL dbcsr_create(matrix_tmp, template=matrix, matrix_type=dbcsr_type_antisymmetric)
+
+      CALL dbcsr_multiply("N", "N", 1.0_dp, matrix, matrix_trafo, &
+                          0.0_dp, matrix_work, filter_eps=eps_filter)
+      CALL dbcsr_multiply("N", "N", 1.0_dp, matrix_trafo, matrix_work, &
+                          0.0_dp, matrix_tmp, filter_eps=eps_filter)
+
+      CALL dbcsr_copy(matrix, matrix_tmp)
+
+      ! Avoid the buildup of noisy blocks
+      CALL dbcsr_filter(matrix, eps_filter)
+
+      CALL dbcsr_release(matrix_tmp)
+      CALL dbcsr_release(matrix_work)
+      CALL timestop(handle)
+
+   END SUBROUTINE transform_m_orth_img_ptrb   
 END MODULE ec_orth_solver

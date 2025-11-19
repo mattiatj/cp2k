@@ -22,6 +22,7 @@ MODULE qs_linres_types
                                               cp_fm_struct_type
    USE cp_fm_types,                     ONLY: cp_fm_release,&
                                               cp_fm_type
+   USE dbcsr_api,                       ONLY: dbcsr_p_type, dbcsr_release
    USE kinds,                           ONLY: dp
    USE qs_grid_atom,                    ONLY: grid_atom_type
    USE qs_harmonics_atom,               ONLY: harmonics_atom_type
@@ -103,10 +104,10 @@ MODULE qs_linres_types
       LOGICAL                                             :: all_pert_op_done = .FALSE.
       LOGICAL, DIMENSION(:, :), POINTER                   :: full_done => NULL()
       INTEGER                                             :: nao = HUGE(1)
-      INTEGER, DIMENSION(2)                               :: nstates = HUGE(1)
+      INTEGER                                             :: nstates(2) = HUGE(1)
       INTEGER                                             :: gauge = HUGE(1)
       INTEGER                                             :: orb_center = HUGE(1)
-      INTEGER, DIMENSION(2)                               :: nbr_center = HUGE(1)
+      INTEGER                                             :: nbr_center(2) = HUGE(1)
       INTEGER, DIMENSION(:), POINTER                      :: list_cubes => NULL()
       INTEGER, DIMENSION(:), POINTER                      :: selected_states_on_atom_list => NULL()
       INTEGER, DIMENSION(:, :, :), POINTER                :: statetrueindex => NULL()
@@ -134,12 +135,21 @@ MODULE qs_linres_types
 ! **************************************************************************************************
 ! \param type for polarisability calculation using Berry operator
    TYPE polar_env_type
+      INTEGER, DIMENSION(2)                        :: nbr_center = -1
       LOGICAL                                      :: do_raman = .FALSE.
       LOGICAL                                      :: run_stopped = .FALSE.
       LOGICAL                                      :: do_periodic = .TRUE.
+      LOGICAL                                      :: ao_solver = .TRUE.
+      LOGICAL                                      :: do_raman_vel = .TRUE.
+      LOGICAL                                      :: do_raman_wannier = .TRUE.
+      INTEGER                                      :: preconditioner 
       REAL(dp), DIMENSION(:, :), POINTER           :: polar => NULL()
       TYPE(cp_fm_type), DIMENSION(:, :), POINTER   :: psi1_dBerry => NULL()
+      TYPE(cp_fm_type), DIMENSION(:, :), POINTER   :: psi1_dBerry_v => NULL()
       TYPE(cp_fm_type), DIMENSION(:, :), POINTER   :: dBerry_psi0 => NULL()
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER :: psi1_dBerry_ao => NULL()
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER :: dBerry_psi0_ao => NULL()      
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER :: dBerry_times_invS => NULL()      
    END TYPE polar_env_type
 ! **************************************************************************************************
 
@@ -1238,22 +1248,36 @@ CONTAINS
 !> \par History
 !>      06.2018 polar_env integrated into qs_env (MK)
 ! **************************************************************************************************
-   SUBROUTINE get_polar_env(polar_env, do_raman, do_periodic, dBerry_psi0, polar, psi1_dBerry, run_stopped)
+   SUBROUTINE get_polar_env(polar_env, do_raman, do_periodic, dBerry_psi0, polar, psi1_dBerry, &
+      psi1_dBerry_v, psi1_dBerry_ao, dBerry_psi0_ao, do_raman_vel, do_raman_wannier, nbr_center, &
+      run_stopped)
 
       TYPE(polar_env_type), INTENT(IN)                   :: polar_env
-      LOGICAL, OPTIONAL                                  :: do_raman, do_periodic
+      INTEGER, OPTIONAL                                  :: nbr_center(2)
+      LOGICAL, OPTIONAL                                  :: do_raman, do_periodic, do_raman_vel, &
+                                                            do_raman_wannier
       TYPE(cp_fm_type), DIMENSION(:, :), OPTIONAL, &
          POINTER                                         :: dBerry_psi0
       REAL(dp), DIMENSION(:, :), OPTIONAL, POINTER       :: polar
       TYPE(cp_fm_type), DIMENSION(:, :), OPTIONAL, &
-         POINTER                                         :: psi1_dBerry
+         POINTER                                         :: psi1_dBerry, psi1_dBerry_v
+      TYPE(dbcsr_p_type), DIMENSION(:, :), OPTIONAL, &
+         POINTER                                         :: psi1_dBerry_ao, &
+                                                            dBerry_psi0_ao
       LOGICAL, OPTIONAL                                  :: run_stopped
 
       IF (PRESENT(polar)) polar => polar_env%polar
+      ! IF (PRESENT(nbr_center)) nbr_center = polar_env%nbr_center
+      IF (PRESENT(nbr_center)) nbr_center(1:2) = polar_env%nbr_center(1:2)
       IF (PRESENT(do_raman)) do_raman = polar_env%do_raman
+      IF (PRESENT(do_raman_vel)) do_raman_vel = polar_env%do_raman_vel
+      IF (PRESENT(do_raman_wannier)) do_raman_wannier = polar_env%do_raman_wannier
       IF (PRESENT(do_periodic)) do_periodic = polar_env%do_periodic
       IF (PRESENT(dBerry_psi0)) dBerry_psi0 => polar_env%dBerry_psi0
       IF (PRESENT(psi1_dBerry)) psi1_dBerry => polar_env%psi1_dBerry
+      IF (PRESENT(psi1_dBerry_v)) psi1_dBerry_v => polar_env%psi1_dBerry_v
+      IF (PRESENT(dBerry_psi0_ao)) dBerry_psi0_ao => polar_env%dBerry_psi0_ao
+      IF (PRESENT(psi1_dBerry_ao)) psi1_dBerry_ao => polar_env%psi1_dBerry_ao
       IF (PRESENT(run_stopped)) run_stopped = polar_env%run_stopped
 
    END SUBROUTINE get_polar_env
@@ -1268,22 +1292,26 @@ CONTAINS
 !> \param psi1_dBerry ...
 !> \param run_stopped ...
 ! **************************************************************************************************
-   SUBROUTINE set_polar_env(polar_env, do_raman, do_periodic, dBerry_psi0, polar, &
-                            psi1_dBerry, run_stopped)
+   SUBROUTINE set_polar_env(polar_env, do_raman, do_raman_vel, do_raman_wannier, do_periodic, &
+      dBerry_psi0, polar, psi1_dBerry, psi1_dBerry_v, run_stopped)
 
       TYPE(polar_env_type), INTENT(INOUT)                :: polar_env
-      LOGICAL, OPTIONAL                                  :: do_raman, do_periodic
+      LOGICAL, OPTIONAL                                  :: do_raman, do_periodic, do_raman_vel, &
+                                          do_raman_wannier
       TYPE(cp_fm_type), DIMENSION(:, :), OPTIONAL, &
-         POINTER                                         :: dBerry_psi0
+      POINTER                                         :: dBerry_psi0
       REAL(dp), DIMENSION(:, :), OPTIONAL, POINTER       :: polar
       TYPE(cp_fm_type), DIMENSION(:, :), OPTIONAL, &
-         POINTER                                         :: psi1_dBerry
+      POINTER                                         :: psi1_dBerry, psi1_dBerry_v
       LOGICAL, OPTIONAL                                  :: run_stopped
 
       IF (PRESENT(polar)) polar_env%polar => polar
       IF (PRESENT(do_raman)) polar_env%do_raman = do_raman
+      IF (PRESENT(do_raman_vel)) polar_env%do_raman_vel = do_raman_vel
+      IF (PRESENT(do_raman_wannier)) polar_env%do_raman_wannier = do_raman_wannier
       IF (PRESENT(do_periodic)) polar_env%do_periodic = do_periodic
       IF (PRESENT(psi1_dBerry)) polar_env%psi1_dBerry => psi1_dBerry
+      IF (PRESENT(psi1_dBerry_v)) polar_env%psi1_dBerry_v => psi1_dBerry_v
       IF (PRESENT(dBerry_psi0)) polar_env%dBerry_psi0 => dBerry_psi0
       IF (PRESENT(run_stopped)) polar_env%run_stopped = run_stopped
 
@@ -1298,17 +1326,61 @@ CONTAINS
    SUBROUTINE polar_env_release(polar_env)
 
       TYPE(polar_env_type), POINTER                      :: polar_env
+      INTEGER                                            :: idir, ispin
 
       IF (ASSOCIATED(polar_env)) THEN
          IF (ASSOCIATED(polar_env%polar)) THEN
             DEALLOCATE (polar_env%polar)
          END IF
-         CALL cp_fm_release(polar_env%dBerry_psi0)
-         CALL cp_fm_release(polar_env%psi1_dBerry)
+         IF (ASSOCIATED(polar_env%dBerry_psi0)) THEN
+            DO idir = 1, SIZE(polar_env%dBerry_psi0, 1)
+               DO ispin = 1, SIZE(polar_env%dBerry_psi0, 2)
+                  CALL cp_fm_release(polar_env%dBerry_psi0(idir, ispin))
+                  ! DEALLOCATE (polar_env%dBerry_psi0(idir, ispin)%matrix)
+               END DO
+            END DO
+            DEALLOCATE (polar_env%dBerry_psi0)
+         END IF
+         IF (ASSOCIATED(polar_env%psi1_dBerry)) THEN
+            DO idir = 1, SIZE(polar_env%psi1_dBerry, 1)
+               DO ispin = 1, SIZE(polar_env%psi1_dBerry, 2)
+                  CALL cp_fm_release(polar_env%psi1_dBerry(idir, ispin))
+                  ! DEALLOCATE (polar_env%psi1_dBerry(idir, ispin)%matrix)
+               END DO
+            END DO
+            DEALLOCATE (polar_env%psi1_dBerry)
+         END IF
+         IF (ASSOCIATED(polar_env%psi1_dBerry_v)) THEN
+            DO idir = 1, SIZE(polar_env%psi1_dBerry_v, 1)
+               DO ispin = 1, SIZE(polar_env%psi1_dBerry_v, 2)
+                  CALL cp_fm_release(polar_env%psi1_dBerry_v(idir, ispin))
+                  ! DEALLOCATE (polar_env%psi1_dBerry_v(idir, ispin)%matrix)
+               END DO
+            END DO
+            DEALLOCATE (polar_env%psi1_dBerry_v)
+         END IF
+
+         IF (ASSOCIATED(polar_env%psi1_dBerry_ao)) THEN
+            DO idir = 1, SIZE(polar_env%psi1_dBerry_ao, 1)
+               DO ispin = 1, SIZE(polar_env%psi1_dBerry_ao, 2)
+                  CALL dbcsr_release(polar_env%psi1_dBerry_ao(idir, ispin)%matrix)
+                  DEALLOCATE (polar_env%psi1_dBerry_ao(idir, ispin)%matrix)
+               END DO
+            END DO
+            DEALLOCATE (polar_env%psi1_dBerry_ao)
+         END IF
+         IF (ASSOCIATED(polar_env%dBerry_psi0_ao)) THEN
+            DO idir = 1, SIZE(polar_env%dBerry_psi0_ao, 1)
+               DO ispin = 1, SIZE(polar_env%dBerry_psi0_ao, 2)
+                  CALL dbcsr_release(polar_env%dBerry_psi0_ao(idir, ispin)%matrix)
+                  DEALLOCATE (polar_env%dBerry_psi0_ao(idir, ispin)%matrix)
+               END DO
+            END DO
+            DEALLOCATE (polar_env%dBerry_psi0_ao)
+         END IF
          DEALLOCATE (polar_env)
          NULLIFY (polar_env)
       END IF
-
    END SUBROUTINE polar_env_release
 
 END MODULE qs_linres_types

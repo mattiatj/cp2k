@@ -40,7 +40,7 @@ MODULE input_cp2k_properties_dft
       ot_precond_s_inverse, scan_x, scan_xy, scan_xyz, scan_xz, scan_y, scan_yz, scan_z, &
       tddfpt_dipole_berry, tddfpt_dipole_length, tddfpt_dipole_velocity, tddfpt_kernel_full, &
       tddfpt_kernel_none, tddfpt_kernel_stda, no_sf_tddfpt, tddfpt_sf_col, tddfpt_sf_noncol, &
-      use_mom_ref_coac, use_mom_ref_com, use_mom_ref_user, use_mom_ref_zero
+      use_mom_ref_coac, use_mom_ref_com, use_mom_ref_user, use_mom_ref_zero, precond_mlp
    USE input_cp2k_atprop, ONLY: create_atprop_section
    USE input_cp2k_dft, ONLY: create_interp_section, &
                              create_mgrid_section
@@ -1287,6 +1287,58 @@ CONTAINS
                           default_l_val=.TRUE., lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
+
+      !%%%%%%%%%%%   Added by Ravi, 01-2023   %%%%%%%%%%%%%
+      CALL keyword_create(keyword, __LOCATION__, name="AO_SOLVER", &
+                          description="Compute the AO-based electric-dipole--electric-dipole polarizability", &
+                          usage="AO_SOLVER T", &
+                          default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="DO_RAMAN_VEL", &
+                          description="Compute the AO-based electric-dipole--electric-dipole polarizability", &
+                          usage="DO_RAMAN_VEL F", &
+                          default_l_val=.TRUE., lone_keyword_l_val=.FALSE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+
+      CALL keyword_create(keyword, __LOCATION__, name="DO_RAMAN_WANNIER", &
+                          description="Compute the AO-based electric-dipole--electric-dipole polarizability", &
+                          usage="DO_RAMAN_WANNIER F", &
+                          default_l_val=.TRUE., lone_keyword_l_val=.FALSE.)
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)      
+
+      CALL keyword_create( &
+         keyword, __LOCATION__, name="PRECONDITIONER", &
+         description="Type of preconditioner to be used with MO conjugate gradient solver. "// &
+         "They differ in effectiveness, cost of construction, cost of application. "// &
+         "Properly preconditioned minimization can be orders of magnitude faster than doing nothing."// &
+         "Only multi-level conjugate gradient preconditioner (MULTI_LEVEL) available for AO response solver (AO_ORTHO).", &
+         usage="PRECONDITIONER FULL_ALL", &
+         default_i_val=precond_mlp, &
+         enum_c_vals=s2a("FULL_ALL", "FULL_SINGLE_INVERSE", "FULL_SINGLE", "FULL_KINETIC", "FULL_S_INVERSE", &
+                         "MULTI_LEVEL", "NONE"), &
+         enum_desc=s2a("Most effective state selective preconditioner based on diagonalization, "// &
+                       "requires the ENERGY_GAP parameter to be an underestimate of the HOMO-LUMO gap. "// &
+                       "This preconditioner is recommended for almost all systems, except very large systems where "// &
+                       "make_preconditioner would dominate the total computational cost.", &
+                       "Based on H-eS cholesky inversion, similar to FULL_SINGLE in preconditioning efficiency "// &
+                       "but cheaper to construct, "// &
+                       "might be somewhat less robust. Recommended for large systems.", &
+                       "Based on H-eS diagonalisation, not as good as FULL_ALL, but somewhat cheaper to apply. ", &
+                       "Cholesky inversion of S and T, fast construction, robust, and relatively good, "// &
+                       "use for very large systems.", &
+                       "Cholesky inversion of S, not as good as FULL_KINETIC, yet equally expensive.", &
+                       "Based on same CG as AO-solver itself, but uses cheaper linear transformation", &
+                       "skip preconditioning"), &
+         enum_i_vals=(/ot_precond_full_all, ot_precond_full_single_inverse, ot_precond_full_single, &
+                       ot_precond_full_kinetic, ot_precond_s_inverse, precond_mlp, ot_precond_none/))
+      CALL section_add_keyword(section, keyword)
+      CALL keyword_release(keyword)
+      
+      !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%      
 
       CALL keyword_create(keyword, __LOCATION__, name="PERIODIC_DIPOLE_OPERATOR", &
                           description="Type of dipole operator: Berry phase(T) or Local(F)", &
