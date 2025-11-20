@@ -91,7 +91,7 @@ MODULE qs_linres_methods
    ! *** Public subroutines ***
    PUBLIC :: linres_localize, linres_solver
    PUBLIC :: linres_write_restart, linres_read_restart
-   PUBLIC :: build_dm_response
+   PUBLIC :: build_dm_response, linres_write_restart_ao, linres_read_restart_ao
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'qs_linres_methods'
 
@@ -921,6 +921,119 @@ CONTAINS
 !> \param tag ...
 !> \param ind ...
 ! **************************************************************************************************
+   SUBROUTINE linres_write_restart_ao(qs_env, linres_section, vec, ivec, tag, ind)
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(section_vals_type), POINTER                   :: linres_section
+      TYPE(cp_fm_type), DIMENSION(:), INTENT(IN)         :: vec
+      INTEGER, INTENT(IN)                                :: ivec
+      CHARACTER(LEN=*)                                   :: tag
+      INTEGER, INTENT(IN), OPTIONAL                      :: ind
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'linres_write_restart'
+
+      CHARACTER(LEN=default_path_length)                 :: filename
+      CHARACTER(LEN=default_string_length)               :: my_middle, my_pos, my_status
+      INTEGER                                            :: handle, i, i_block, ia, ie, iounit, &
+                                                            ispin, j, max_block, nao, nmo, nspins, &
+                                                            rst_unit
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: vecbuffer
+      TYPE(cp_fm_type), POINTER                          :: mo_coeff
+      TYPE(cp_logger_type), POINTER                      :: logger
+      TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+      TYPE(section_vals_type), POINTER                   :: print_key
+
+      NULLIFY (logger, mo_coeff, mos, para_env, print_key, vecbuffer)
+
+      CALL timeset(routineN, handle)
+
+      logger => cp_get_default_logger()
+
+      IF (BTEST(cp_print_key_should_output(logger%iter_info, linres_section, "PRINT%RESTART", &
+                                           used_print_key=print_key), &
+                cp_p_file)) THEN
+
+         iounit = cp_print_key_unit_nr(logger, linres_section, &
+                                       "PRINT%PROGRAM_RUN_INFO", extension=".Log")
+
+         CALL get_qs_env(qs_env=qs_env, &
+                         mos=mos, &
+                         para_env=para_env)
+
+         nspins = SIZE(mos)
+
+         my_status = "REPLACE"
+         my_pos = "REWIND"
+         CALL XSTRING(tag, ia, ie)
+         IF (PRESENT(ind)) THEN
+            my_middle = "RESTART-"//tag(ia:ie)//TRIM(ADJUSTL(cp_to_string(ivec)))
+         ELSE
+            my_middle = "RESTART-"//tag(ia:ie)
+            IF (ivec > 1) THEN
+               my_status = "OLD"
+               my_pos = "APPEND"
+            END IF
+         END IF
+         rst_unit = cp_print_key_unit_nr(logger, linres_section, "PRINT%RESTART", &
+                                         extension=".lr", middle_name=TRIM(my_middle), file_status=TRIM(my_status), &
+                                         file_position=TRIM(my_pos), file_action="WRITE", file_form="UNFORMATTED")
+
+         filename = cp_print_key_generate_filename(logger, print_key, &
+                                                   extension=".lr", middle_name=TRIM(my_middle), my_local=.FALSE.)
+
+         IF (iounit > 0) THEN
+            WRITE (UNIT=iounit, FMT="(T2,A)") &
+               "LINRES| Writing response functions to the restart file <"//TRIM(ADJUSTL(filename))//">"
+         END IF
+
+         !
+         ! write data to file
+         ! use the scalapack block size as a default for buffering columns
+         CALL get_mo_set(mos(1), mo_coeff=mo_coeff)
+         CALL cp_fm_get_info(mo_coeff, nrow_global=nao, ncol_block=max_block)
+         ALLOCATE (vecbuffer(nao, max_block))
+
+         IF (PRESENT(ind)) THEN
+            IF (rst_unit > 0) WRITE (rst_unit) ind, ivec, nspins, nao
+         ELSE
+            IF (rst_unit > 0) WRITE (rst_unit) ivec, nspins, nao
+         END IF
+
+         DO ispin = 1, nspins
+            CALL cp_fm_get_info(vec(ispin), ncol_global=nmo)
+
+            IF (rst_unit > 0) WRITE (rst_unit) nmo
+
+            DO i = 1, nmo, MAX(max_block, 1)
+               i_block = MIN(max_block, nmo - i + 1)
+               CALL cp_fm_get_submatrix(vec(ispin), vecbuffer, 1, i, nao, i_block)
+               ! doing this in one write would increase efficiency, but breaks RESTART compatibility.
+               ! to old ones, and in cases where max_block is different between runs, as might happen during
+               ! restarts with a different number of CPUs
+               DO j = 1, i_block
+                  IF (rst_unit > 0) WRITE (rst_unit) vecbuffer(1:nao, j)
+               END DO
+            END DO
+         END DO
+
+         DEALLOCATE (vecbuffer)
+
+         CALL cp_print_key_finished_output(rst_unit, logger, linres_section, &
+                                           "PRINT%RESTART")
+      END IF
+
+      CALL timestop(handle)
+
+   END SUBROUTINE linres_write_restart_ao      
+! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param linres_section ...
+!> \param vec ...
+!> \param ivec ...
+!> \param tag ...
+!> \param ind ...
+! **************************************************************************************************
    SUBROUTINE linres_read_restart(qs_env, linres_section, vec, ivec, tag, ind)
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(section_vals_type), POINTER                   :: linres_section
@@ -1075,6 +1188,172 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE linres_read_restart
+
+! **************************************************************************************************
+!> \brief ...
+!> \param qs_env ...
+!> \param linres_section ...
+!> \param vec ...
+!> \param vec_ao ...
+!> \param ivec ...
+!> \param tag ...
+!> \param ind ...
+! **************************************************************************************************
+   SUBROUTINE linres_read_restart_ao(qs_env, linres_section, vec, ivec, tag, ind)
+
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(section_vals_type), POINTER                   :: linres_section
+      TYPE(cp_fm_type), DIMENSION(:), INTENT(IN)         :: vec
+      INTEGER, INTENT(IN)                                :: ivec
+      CHARACTER(LEN=*)                                   :: tag
+      INTEGER, INTENT(INOUT), OPTIONAL                   :: ind
+
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'linres_read_restart'
+
+      CHARACTER(LEN=default_path_length)                 :: filename
+      CHARACTER(LEN=default_string_length)               :: my_middle
+      INTEGER :: handle, i, i_block, ia, ie, iostat, iounit, ispin, iv, iv1, ivec_tmp, j, &
+         max_block, n_rep_val, nao, nao_tmp, nmo, nmo_tmp, nspins, nspins_tmp, rst_unit
+      LOGICAL                                            :: file_exists
+      REAL(KIND=dp), DIMENSION(:, :), POINTER            :: vecbuffer
+      TYPE(cp_fm_type), POINTER                          :: mo_coeff
+      TYPE(cp_logger_type), POINTER                      :: logger
+      TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos
+      TYPE(mp_para_env_type), POINTER                    :: para_env
+      TYPE(section_vals_type), POINTER                   :: print_key
+
+      file_exists = .FALSE.
+
+      CALL timeset(routineN, handle)
+
+      NULLIFY (mos, para_env, logger, print_key, vecbuffer)
+      logger => cp_get_default_logger()
+
+      iounit = cp_print_key_unit_nr(logger, linres_section, &
+                                    "PRINT%PROGRAM_RUN_INFO", extension=".Log")
+
+      CALL get_qs_env(qs_env=qs_env, &
+                      para_env=para_env, &
+                      mos=mos)
+
+      nspins = SIZE(mos)
+
+      rst_unit = -1
+      IF (para_env%is_source()) THEN
+         CALL section_vals_val_get(linres_section, "WFN_RESTART_FILE_NAME", &
+                                   n_rep_val=n_rep_val)
+
+         CALL XSTRING(tag, ia, ie)
+         IF (PRESENT(ind)) THEN
+            my_middle = "RESTART-"//tag(ia:ie)//TRIM(ADJUSTL(cp_to_string(ivec)))
+         ELSE
+            my_middle = "RESTART-"//tag(ia:ie)
+         END IF
+
+         IF (n_rep_val > 0) THEN
+            CALL section_vals_val_get(linres_section, "WFN_RESTART_FILE_NAME", c_val=filename)
+            CALL xstring(filename, ia, ie)
+            filename = filename(ia:ie)//TRIM(my_middle)//".lr"
+         ELSE
+            ! try to read from the filename that is generated automatically from the printkey
+            print_key => section_vals_get_subs_vals(linres_section, "PRINT%RESTART")
+            filename = cp_print_key_generate_filename(logger, print_key, &
+                                                      extension=".lr", middle_name=TRIM(my_middle), my_local=.FALSE.)
+         END IF
+         INQUIRE (FILE=filename, exist=file_exists)
+         !
+         ! open file
+         IF (file_exists) THEN
+            CALL open_file(file_name=TRIM(filename), &
+                           file_action="READ", &
+                           file_form="UNFORMATTED", &
+                           file_position="REWIND", &
+                           file_status="OLD", &
+                           unit_number=rst_unit)
+
+            IF (iounit > 0) WRITE (iounit, "(T2,A)") &
+               "LINRES| Reading response wavefunctions from the restart file <"//TRIM(ADJUSTL(filename))//">"
+         ELSE
+            IF (iounit > 0) WRITE (iounit, "(T2,A)") &
+               "LINRES| Restart file  <"//TRIM(ADJUSTL(filename))//"> not found"
+         END IF
+      END IF
+
+      CALL para_env%bcast(file_exists)
+
+      IF (file_exists) THEN
+
+         CALL get_mo_set(mos(1), mo_coeff=mo_coeff)
+         CALL cp_fm_get_info(mo_coeff, nrow_global=nao, ncol_block=max_block)
+
+         ALLOCATE (vecbuffer(nao, max_block))
+         !
+         ! read headers
+         IF (PRESENT(ind)) THEN
+            iv1 = ivec
+         ELSE
+            iv1 = 1
+         END IF
+         DO iv = iv1, ivec
+
+            IF (PRESENT(ind)) THEN
+               IF (rst_unit > 0) READ (rst_unit, IOSTAT=iostat) ind, ivec_tmp, nspins_tmp, nao_tmp
+               CALL para_env%bcast(iostat)
+               CALL para_env%bcast(ind)
+            ELSE
+               IF (rst_unit > 0) READ (rst_unit, IOSTAT=iostat) ivec_tmp, nspins_tmp, nao_tmp
+               CALL para_env%bcast(iostat)
+            END IF
+
+            IF (iostat .NE. 0) EXIT
+            CALL para_env%bcast(ivec_tmp)
+            CALL para_env%bcast(nspins_tmp)
+            CALL para_env%bcast(nao_tmp)
+
+            ! check that the number nao, nmo and nspins are
+            ! the same as in the current mos
+            IF (nspins_tmp .NE. nspins) CPABORT("nspins not consistent")
+            IF (nao_tmp .NE. nao) CPABORT("nao not consistent")
+            !
+            DO ispin = 1, nspins
+               CALL get_mo_set(mos(ispin), mo_coeff=mo_coeff)
+               CALL cp_fm_get_info(mo_coeff, ncol_global=nmo)
+               !
+               IF (rst_unit > 0) READ (rst_unit) nmo_tmp
+               CALL para_env%bcast(nmo_tmp)
+               IF (nmo_tmp .NE. nmo) CPABORT("nmo not consistent")
+               !
+               ! read the response
+               DO i = 1, nmo, MAX(max_block, 1)
+                  i_block = MIN(max_block, nmo - i + 1)
+                  DO j = 1, i_block
+                     IF (rst_unit > 0) READ (rst_unit) vecbuffer(1:nao, j)
+                  END DO
+                  IF (iv .EQ. ivec_tmp) THEN
+                     CALL para_env%bcast(vecbuffer)
+                     CALL cp_fm_set_submatrix(vec(ispin), vecbuffer, 1, i, nao, i_block)
+                  END IF
+               END DO
+            END DO
+            IF (ivec .EQ. ivec_tmp) EXIT
+         END DO
+
+         IF (iostat /= 0) THEN
+            IF (iounit > 0) WRITE (iounit, "(T2,A)") &
+               "LINRES| Restart file <"//TRIM(ADJUSTL(filename))//"> not found"
+         END IF
+
+         DEALLOCATE (vecbuffer)
+
+      END IF
+
+      IF (para_env%is_source()) THEN
+         IF (file_exists) CALL close_file(unit_number=rst_unit)
+      END IF
+
+      CALL timestop(handle)
+
+   END SUBROUTINE linres_read_restart_ao   
 
 ! **************************************************************************************************
 !> \brief ...
