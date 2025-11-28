@@ -1299,14 +1299,14 @@ CONTAINS
       CALL keyword_create(keyword, __LOCATION__, name="DO_RAMAN_VEL", &
                           description="Compute the AO-based electric-dipole--electric-dipole polarizability", &
                           usage="DO_RAMAN_VEL F", &
-                          default_l_val=.TRUE., lone_keyword_l_val=.FALSE.)
+                          default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
 
       CALL keyword_create(keyword, __LOCATION__, name="DO_RAMAN_WANNIER", &
                           description="Compute the AO-based electric-dipole--electric-dipole polarizability", &
                           usage="DO_RAMAN_WANNIER F", &
-                          default_l_val=.TRUE., lone_keyword_l_val=.FALSE.)
+                          default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)      
 

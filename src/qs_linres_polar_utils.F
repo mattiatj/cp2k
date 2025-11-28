@@ -185,7 +185,7 @@ SUBROUTINE polar_env_init(qs_env)
    CALL section_vals_val_get(polar_section, "DO_RAMAN_VEL", l_val=polar_env%do_raman_vel)
    CALL section_vals_val_get(polar_section, "DO_RAMAN_WANNIER", l_val=polar_env%do_raman_wannier)
    ! CALL section_vals_val_get(polar_section, "PRECONDITIONER", i_val=polar_env%preconditioner)
-   CALL section_vals_val_get(polar_section, "PRECONDITIONER", i_val=linres_control%preconditioner_type)
+   ! CALL section_vals_val_get(polar_section, "PRECONDITIONER", i_val=linres_control%preconditioner_type)
 
    ! Allocate components of the polar environment if needed
    IF (.NOT. ASSOCIATED(polar_env%polar)) THEN

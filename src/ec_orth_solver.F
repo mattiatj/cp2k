@@ -62,7 +62,9 @@ MODULE ec_orth_solver
    USE qs_integrate_potential,          ONLY: integrate_v_rspace
    USE qs_kpp1_env_types,               ONLY: qs_kpp1_env_type
    USE qs_linres_kernel,                ONLY: apply_hfx,&
-                                              apply_xc_admm
+                                              apply_xc_admm, &
+                                              apply_op_2_dft,&
+                                              apply_op_2_xtb
    USE qs_linres_types,                 ONLY: linres_control_type
    USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
    USE qs_p_env_methods,                ONLY: p_env_check_i_alloc,&
@@ -1623,7 +1625,7 @@ CONTAINS
             ! Calculate kernel
             ! Ax = F*B - B*F + G(B)*P - P*G(B)
             !                               IN/OUT     IN        IN                 IN
-            CALL hessian_op2(qs_env, p_env, matrix_Ax, matrix_p, matrix_s_sqrt_inv, eps_filter)
+            CALL hessian_op2_mod(qs_env, p_env, matrix_Ax, matrix_p, matrix_s_sqrt_inv, eps_filter)
 
          END IF
       END IF
@@ -1865,6 +1867,87 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE hessian_op2
+
+! **************************************************************************************************
+!> \brief  Calculate lin transformation of Hessian matrix on a trial matrix matrix_cg
+!>         which is stored in response density B = [cg,P] = cg*P - P*cg = cg*P + (cg*P)^T
+!>         Ax = [F, B] + [G(B), Pin] in orthonormal basis
+!>
+!> \param qs_env ...
+!> \param p_env p-environment with trial density environment
+!> \param matrix_Ax contains first part of Hessian linear transformation, kernel contribution
+!>                  is calculated and added in this routine
+!> \param matrix_p Density matrix in orthogonal basis
+!> \param matrix_s_sqrt_inv contains matrix S^(-1/2) for switching to orthonormal Lowdin basis
+!> \param eps_filter ...
+!>
+!> \date    12.2019
+!> \author  Fabian Belleflamme, modified by Ravi Kumar (to include all Hxc correction terms)
+! **************************************************************************************************
+   SUBROUTINE hessian_op2_mod(qs_env, p_env, matrix_Ax, matrix_p, matrix_s_sqrt_inv, eps_filter)
+
+      TYPE(qs_environment_type), POINTER                 :: qs_env
+      TYPE(qs_p_env_type), POINTER                       :: p_env
+      TYPE(dbcsr_p_type), DIMENSION(:), INTENT(INOUT), &
+         POINTER                                         :: matrix_Ax
+      TYPE(dbcsr_p_type), DIMENSION(:), INTENT(IN), &
+         POINTER                                         :: matrix_p
+      TYPE(dbcsr_type), INTENT(IN)                       :: matrix_s_sqrt_inv
+      REAL(KIND=dp), INTENT(IN)                          :: eps_filter
+
+      CHARACTER(len=*), PARAMETER                        :: routineN = 'hessian_op2_mod'
+
+      INTEGER                                            :: handle, ispin, nspins
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_G!, matrix_s, rho1_ao, rho_ao
+      TYPE(dft_control_type), POINTER                    :: dft_control
+      CALL timeset(routineN, handle)
+
+      NULLIFY (dft_control)
+
+      CALL get_qs_env(qs_env=qs_env, &
+                      dft_control=dft_control)
+      nspins = dft_control%nspins
+
+      IF (dft_control%qs_control%semi_empirical) THEN
+         CPABORT("Linear response not available with SE methods")
+      ELSEIF (dft_control%qs_control%dftb) THEN
+         CPABORT("Linear response not available with DFTB")
+      ELSEIF (dft_control%qs_control%xtb) THEN
+         CALL apply_op_2_xtb(qs_env, p_env)
+      ELSE
+         CALL apply_op_2_dft(qs_env, p_env)
+         CALL apply_hfx(qs_env, p_env)
+         CALL apply_xc_admm(qs_env, p_env)
+         IF (dft_control%do_admm) CALL p_env_finish_kpp1(qs_env, p_env)
+      END IF
+
+      ! Init response kernel matrix
+      ! matrix G(B)
+      NULLIFY (matrix_G)
+      CALL dbcsr_allocate_matrix_set(matrix_G, nspins)
+      DO ispin = 1, nspins
+         ALLOCATE (matrix_G(ispin)%matrix)
+         CALL dbcsr_copy(matrix_G(ispin)%matrix, p_env%kpp1(ispin)%matrix, &
+                         name="MATRIX Kernel")
+      END DO
+
+      ! Transforming G(B) into orthonormal basis
+      ! Careful, this de-symmetrizes matrix_G
+      DO ispin = 1, nspins
+         CALL transform_m_orth(matrix_G(ispin)%matrix, matrix_s_sqrt_inv, eps_filter)
+         CALL dbcsr_filter(matrix_G(ispin)%matrix, eps_filter)
+      END DO
+
+      ! Hessian already contains  Ax = [F,B] (ORTHO), now adding
+      ! Ax = Ax + G(B)P - (G(B)P)^T
+      CALL commutator(matrix_G, matrix_p, matrix_Ax, eps_filter, .FALSE., 1.0_dp, 1.0_dp)
+
+      CALL dbcsr_deallocate_matrix_set(matrix_G)
+
+      CALL timestop(handle)
+
+   END SUBROUTINE hessian_op2_mod
+
 
 ! **************************************************************************************************
 !> \brief computes (anti-)commutator exploiting (anti-)symmetry:

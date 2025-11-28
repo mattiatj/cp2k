@@ -114,6 +114,8 @@ MODULE qs_linres_kernel
    PUBLIC :: apply_xc_admm
    PUBLIC :: apply_hfx
    PUBLIC :: apply_op_2
+   PUBLIC :: apply_op_2_dft
+   PUBLIC :: apply_op_2_xtb
    PUBLIC :: hfx_matrix
 
    CHARACTER(len=*), PARAMETER, PRIVATE :: moduleN = 'qs_linres_kernel'
