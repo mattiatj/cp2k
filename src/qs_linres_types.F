@@ -22,7 +22,8 @@ MODULE qs_linres_types
                                               cp_fm_struct_type
    USE cp_fm_types,                     ONLY: cp_fm_release,&
                                               cp_fm_type
-   USE dbcsr_api,                       ONLY: dbcsr_p_type, dbcsr_release
+   USE dbcsr_api,                       ONLY: dbcsr_p_type,&
+                                              dbcsr_release
    USE kinds,                           ONLY: dp
    USE qs_grid_atom,                    ONLY: grid_atom_type
    USE qs_harmonics_atom,               ONLY: harmonics_atom_type
@@ -142,14 +143,14 @@ MODULE qs_linres_types
       LOGICAL                                      :: ao_solver = .TRUE.
       LOGICAL                                      :: do_raman_vel = .TRUE.
       LOGICAL                                      :: do_raman_wannier = .TRUE.
-      INTEGER                                      :: preconditioner 
+      INTEGER                                      :: preconditioner
       REAL(dp), DIMENSION(:, :), POINTER           :: polar => NULL()
       TYPE(cp_fm_type), DIMENSION(:, :), POINTER   :: psi1_dBerry => NULL()
       TYPE(cp_fm_type), DIMENSION(:, :), POINTER   :: psi1_dBerry_v => NULL()
       TYPE(cp_fm_type), DIMENSION(:, :), POINTER   :: dBerry_psi0 => NULL()
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER :: psi1_dBerry_ao => NULL()
-      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER :: dBerry_psi0_ao => NULL()      
-      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER :: dBerry_times_invS => NULL()      
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER :: dBerry_psi0_ao => NULL()
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER :: dBerry_times_invS => NULL()
    END TYPE polar_env_type
 ! **************************************************************************************************
 
@@ -1244,26 +1245,31 @@ CONTAINS
 !> \param dBerry_psi0 ...
 !> \param polar ...
 !> \param psi1_dBerry ...
+!> \param psi1_dBerry_v ...
+!> \param psi1_dBerry_ao ...
+!> \param dBerry_psi0_ao ...
+!> \param do_raman_vel ...
+!> \param do_raman_wannier ...
+!> \param nbr_center ...
 !> \param run_stopped ...
 !> \par History
 !>      06.2018 polar_env integrated into qs_env (MK)
 ! **************************************************************************************************
    SUBROUTINE get_polar_env(polar_env, do_raman, do_periodic, dBerry_psi0, polar, psi1_dBerry, &
-      psi1_dBerry_v, psi1_dBerry_ao, dBerry_psi0_ao, do_raman_vel, do_raman_wannier, nbr_center, &
-      run_stopped)
+                            psi1_dBerry_v, psi1_dBerry_ao, dBerry_psi0_ao, do_raman_vel, do_raman_wannier, nbr_center, &
+                            run_stopped)
 
       TYPE(polar_env_type), INTENT(IN)                   :: polar_env
-      INTEGER, OPTIONAL                                  :: nbr_center(2)
-      LOGICAL, OPTIONAL                                  :: do_raman, do_periodic, do_raman_vel, &
-                                                            do_raman_wannier
+      LOGICAL, OPTIONAL                                  :: do_raman, do_periodic
       TYPE(cp_fm_type), DIMENSION(:, :), OPTIONAL, &
          POINTER                                         :: dBerry_psi0
       REAL(dp), DIMENSION(:, :), OPTIONAL, POINTER       :: polar
       TYPE(cp_fm_type), DIMENSION(:, :), OPTIONAL, &
          POINTER                                         :: psi1_dBerry, psi1_dBerry_v
       TYPE(dbcsr_p_type), DIMENSION(:, :), OPTIONAL, &
-         POINTER                                         :: psi1_dBerry_ao, &
-                                                            dBerry_psi0_ao
+         POINTER                                         :: psi1_dBerry_ao, dBerry_psi0_ao
+      LOGICAL, OPTIONAL                                  :: do_raman_vel, do_raman_wannier
+      INTEGER, OPTIONAL                                  :: nbr_center(2)
       LOGICAL, OPTIONAL                                  :: run_stopped
 
       IF (PRESENT(polar)) polar => polar_env%polar
@@ -1286,23 +1292,26 @@ CONTAINS
 !> \brief ...
 !> \param polar_env ...
 !> \param do_raman ...
+!> \param do_raman_vel ...
+!> \param do_raman_wannier ...
 !> \param do_periodic ...
 !> \param dBerry_psi0 ...
 !> \param polar ...
 !> \param psi1_dBerry ...
+!> \param psi1_dBerry_v ...
 !> \param run_stopped ...
 ! **************************************************************************************************
    SUBROUTINE set_polar_env(polar_env, do_raman, do_raman_vel, do_raman_wannier, do_periodic, &
-      dBerry_psi0, polar, psi1_dBerry, psi1_dBerry_v, run_stopped)
+                            dBerry_psi0, polar, psi1_dBerry, psi1_dBerry_v, run_stopped)
 
       TYPE(polar_env_type), INTENT(INOUT)                :: polar_env
-      LOGICAL, OPTIONAL                                  :: do_raman, do_periodic, do_raman_vel, &
-                                          do_raman_wannier
+      LOGICAL, OPTIONAL                                  :: do_raman, do_raman_vel, &
+                                                            do_raman_wannier, do_periodic
       TYPE(cp_fm_type), DIMENSION(:, :), OPTIONAL, &
-      POINTER                                         :: dBerry_psi0
+         POINTER                                         :: dBerry_psi0
       REAL(dp), DIMENSION(:, :), OPTIONAL, POINTER       :: polar
       TYPE(cp_fm_type), DIMENSION(:, :), OPTIONAL, &
-      POINTER                                         :: psi1_dBerry, psi1_dBerry_v
+         POINTER                                         :: psi1_dBerry, psi1_dBerry_v
       LOGICAL, OPTIONAL                                  :: run_stopped
 
       IF (PRESENT(polar)) polar_env%polar => polar
@@ -1326,6 +1335,7 @@ CONTAINS
    SUBROUTINE polar_env_release(polar_env)
 
       TYPE(polar_env_type), POINTER                      :: polar_env
+
       INTEGER                                            :: idir, ispin
 
       IF (ASSOCIATED(polar_env)) THEN

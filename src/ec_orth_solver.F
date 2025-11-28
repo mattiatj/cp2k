@@ -18,9 +18,8 @@ MODULE ec_orth_solver
    USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_api,                    ONLY: &
         dbcsr_add, dbcsr_copy, dbcsr_create, dbcsr_desymmetrize, dbcsr_filter, dbcsr_finalize, &
-        dbcsr_get_info, dbcsr_multiply, dbcsr_p_type, dbcsr_release, dbcsr_scale, dbcsr_set, &
-        dbcsr_transposed, dbcsr_type, dbcsr_type_no_symmetry, dbcsr_type_antisymmetric, dbcsr_init_p,&
-        dbcsr_print
+        dbcsr_get_info, dbcsr_init_p, dbcsr_multiply, dbcsr_p_type, dbcsr_release, dbcsr_scale, &
+        dbcsr_set, dbcsr_transposed, dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry
    USE cp_dbcsr_contrib,                ONLY: dbcsr_add_on_diag,&
                                               dbcsr_checksum,&
                                               dbcsr_dot
@@ -62,9 +61,9 @@ MODULE ec_orth_solver
    USE qs_integrate_potential,          ONLY: integrate_v_rspace
    USE qs_kpp1_env_types,               ONLY: qs_kpp1_env_type
    USE qs_linres_kernel,                ONLY: apply_hfx,&
-                                              apply_xc_admm, &
                                               apply_op_2_dft,&
-                                              apply_op_2_xtb
+                                              apply_op_2_xtb,&
+                                              apply_xc_admm
    USE qs_linres_types,                 ONLY: linres_control_type
    USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
    USE qs_p_env_methods,                ONLY: p_env_check_i_alloc,&
@@ -877,7 +876,7 @@ CONTAINS
       INTEGER, INTENT(IN)                                :: iounit
       LOGICAL, INTENT(OUT)                               :: should_stop
 
-      CHARACTER(len=*), PARAMETER                        :: routineN = 'ec_response_ao'
+      CHARACTER(len=*), PARAMETER :: routineN = 'ec_response_ao_vel'
 
       INTEGER                                            :: handle, i, ispin, max_iter_lanczos, nao, &
                                                             nspins, s_sqrt_method, s_sqrt_order
@@ -894,7 +893,7 @@ CONTAINS
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(linres_control_type), POINTER                 :: linres_control
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-      POINTER                                            :: sab_orb
+         POINTER                                         :: sab_orb
       TYPE(qs_rho_type), POINTER                         :: rho
       TYPE(section_vals_type), POINTER                   :: solver_section
 
@@ -927,7 +926,7 @@ CONTAINS
       CALL section_vals_val_get(solver_section, "MAX_ITER_LANCZOS", i_val=max_iter_lanczos)
 
       eps_filter = linres_control%eps_filter
-      
+
       CALL qs_rho_get(rho, rho_ao=rho_ao)
 
       ALLOCATE (alpha(nspins), beta(nspins), new_norm(nspins), norm_cA(nspins), norm_rr(nspins))
@@ -985,10 +984,10 @@ CONTAINS
          CALL transform_m_orth(matrix_p(ispin)%matrix, matrix_s_sqrt, eps_filter)
          CALL transform_m_orth(matrix_ks(ispin)%matrix, matrix_s_sqrt_inv, eps_filter)
          ! IF (.NOT. linres_control%do_kernel) THEN
-            CALL transform_m_orth_img_ptrb(matrix_nsc(ispin)%matrix, matrix_s_sqrt_inv, eps_filter)
+         CALL transform_m_orth_img_ptrb(matrix_nsc(ispin)%matrix, matrix_s_sqrt_inv, eps_filter)
          ! ELSE
-            ! CALL transform_m_orth(matrix_nsc(ispin)%matrix, matrix_s_sqrt_inv, eps_filter)
-         ! END IF  
+         ! CALL transform_m_orth(matrix_nsc(ispin)%matrix, matrix_s_sqrt_inv, eps_filter)
+         ! END IF
       END DO
 
       !----------------------------------------
@@ -1027,7 +1026,7 @@ CONTAINS
          CALL dbcsr_create(matrix_res(ispin)%matrix, name="RESIDUE", &
                            template=matrix_s(1)%matrix, &
                            matrix_type=dbcsr_type_no_symmetry)
-                           
+
          CALL dbcsr_init_p(temp(ispin)%matrix)
          CALL dbcsr_create(temp(ispin)%matrix, template=ksmat(1)%matrix, &
                            matrix_type=dbcsr_type_antisymmetric)
@@ -1038,7 +1037,7 @@ CONTAINS
          CALL dbcsr_create(matrix_z(ispin)%matrix, template=ksmat(1)%matrix, &
                            matrix_type=dbcsr_type_antisymmetric)
          CALL cp_dbcsr_alloc_block_from_nbl(matrix_z(ispin)%matrix, sab_orb)
-         CALL dbcsr_set(matrix_z(ispin)%matrix, 0._dp) 
+         CALL dbcsr_set(matrix_z(ispin)%matrix, 0._dp)
          CALL dbcsr_desymmetrize(temp(ispin)%matrix, matrix_z(ispin)%matrix)
 
          CALL dbcsr_create(matrix_z0(ispin)%matrix, name="p after precondi-Matrix", &
@@ -1114,7 +1113,7 @@ CONTAINS
          ! Tr(r_0 * z_0)
          CALL dbcsr_dot(matrix_res(ispin)%matrix, matrix_cg(ispin)%matrix, norm_rr(ispin))
 
-         IF (norm_rr(ispin) .LT. 0.0_dp) CPABORT("norm_rr < 0")
+         IF (norm_rr(ispin) < 0.0_dp) CPABORT("norm_rr < 0")
          norm_res = MAX(norm_res, ABS(norm_rr(ispin)/REAL(nao, dp)))
       END DO
 
@@ -1141,12 +1140,12 @@ CONTAINS
 
          ! Convergence criteria
          ! default for eps 10E-6 in MO_linres
-         IF (norm_res .LT. linres_control%eps) THEN
+         IF (norm_res < linres_control%eps) THEN
             linres_control%converged = .TRUE.
          END IF
 
          t2 = m_walltime()
-         IF (i .EQ. 1 .OR. MOD(i, 1) .EQ. 0 .OR. linres_control%converged &
+         IF (i == 1 .OR. MOD(i, 1) == 0 .OR. linres_control%converged &
              .OR. restart .OR. should_stop) THEN
             IF (iounit > 0) THEN
                WRITE (iounit, "(T5,I5,T18,A3,T28,L1,T38,1E8.2,T48,F16.10,T68,F8.2)") &
@@ -1197,7 +1196,7 @@ CONTAINS
             ! norm_cA = tr(Ap_j * p_j)
             CALL dbcsr_dot(matrix_cg(ispin)%matrix, matrix_Ax(ispin)%matrix, norm_cA(ispin))
 
-            IF (norm_cA(ispin) .LT. 0.0_dp) THEN
+            IF (norm_cA(ispin) < 0.0_dp) THEN
 
                ! Recalculate w/o preconditioner
                IF (i > 1) THEN
@@ -1238,7 +1237,7 @@ CONTAINS
 
          DO ispin = 1, nspins
             ! Determine step-size
-            IF (norm_cA(ispin) .LT. linres_control%eps) THEN
+            IF (norm_cA(ispin) < linres_control%eps) THEN
                alpha(ispin) = 1.0_dp
             ELSE
                alpha(ispin) = norm_rr(ispin)/norm_cA(ispin)
@@ -1251,7 +1250,7 @@ CONTAINS
 
          ! need to recompute the residue
          restart = .FALSE.
-         IF (MOD(i, linres_control%restart_every) .EQ. 0) THEN
+         IF (MOD(i, linres_control%restart_every) == 0) THEN
             !
             ! r_j+1 = b - A * x_j+1
             CALL build_hessian_op(qs_env=qs_env, &
@@ -1264,7 +1263,7 @@ CONTAINS
                                   eps_filter=eps_filter)
             ! b
             CALL commutator(matrix_nsc, matrix_p, matrix_res, eps_filter, .FALSE., alpha=focc)
-                                             
+
             DO ispin = 1, nspins
                CALL dbcsr_add(matrix_res(ispin)%matrix, matrix_Ax(ispin)%matrix, 1.0_dp, -1.0_dp)
             END DO
@@ -1308,12 +1307,12 @@ CONTAINS
          DO ispin = 1, nspins
             ! Tr[r_j+1*z_j+1]
             CALL dbcsr_dot(matrix_res(ispin)%matrix, matrix_z0(ispin)%matrix, new_norm(ispin))
-            IF (new_norm(ispin) .LT. 0.0_dp) CPABORT("tr(r_j+1*z_j+1) < 0")
+            IF (new_norm(ispin) < 0.0_dp) CPABORT("tr(r_j+1*z_j+1) < 0")
             IF (abnormal_value(new_norm(ispin))) &
                CPABORT("Preconditioner: Tr[r_j+1*z_j+1] is an abnormal value (NaN/Inf)")
             norm_res = MAX(norm_res, new_norm(ispin)/REAL(nao, dp))
 
-            IF (norm_rr(ispin) .LT. linres_control%eps .OR. new_norm(ispin) .LT. linres_control%eps) THEN
+            IF (norm_rr(ispin) < linres_control%eps .OR. new_norm(ispin) < linres_control%eps) THEN
                beta(ispin) = 0.0_dp
                linres_control%converged = .TRUE.
             ELSE
@@ -1375,7 +1374,7 @@ CONTAINS
 
       CALL timestop(handle)
 
-   END SUBROUTINE ec_response_ao_vel   
+   END SUBROUTINE ec_response_ao_vel
 ! **************************************************************************************************
 !> \brief Compute matrix_wz as needed for the forces
 !>        Wz = 0.5*(Z*KS*P + P*KS*Z) (closed-shell)
@@ -1565,7 +1564,7 @@ CONTAINS
       CALL get_qs_env(qs_env=qs_env, &
                       dft_control=dft_control, &
                       para_env=para_env, &
-                      linres_control=linres_control,&
+                      linres_control=linres_control, &
                       rho=rho)
       nspins = dft_control%nspins
 
@@ -1594,7 +1593,7 @@ CONTAINS
          END DO
 
          ! skip the kernel if the DM is very small
-         IF (chksum .GT. 1.0E-14_dp) THEN
+         IF (chksum > 1.0E-14_dp) THEN
 
             ! Bring matrix B as density on grid
 
@@ -1898,8 +1897,11 @@ CONTAINS
       CHARACTER(len=*), PARAMETER                        :: routineN = 'hessian_op2_mod'
 
       INTEGER                                            :: handle, ispin, nspins
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_G!, matrix_s, rho1_ao, rho_ao
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_G
       TYPE(dft_control_type), POINTER                    :: dft_control
+
+!, matrix_s, rho1_ao, rho_ao
+
       CALL timeset(routineN, handle)
 
       NULLIFY (dft_control)
@@ -1947,7 +1949,6 @@ CONTAINS
       CALL timestop(handle)
 
    END SUBROUTINE hessian_op2_mod
-
 
 ! **************************************************************************************************
 !> \brief computes (anti-)commutator exploiting (anti-)symmetry:
@@ -2151,7 +2152,7 @@ CONTAINS
       TYPE(dbcsr_type)                                   :: matrix, matrix_trafo
       REAL(KIND=dp)                                      :: eps_filter
 
-      CHARACTER(LEN=*), PARAMETER                        :: routineN = 'transform_m_orth'
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'transform_m_orth_img_ptrb'
 
       INTEGER                                            :: handle
       TYPE(dbcsr_type)                                   :: matrix_tmp, matrix_work
@@ -2176,5 +2177,5 @@ CONTAINS
       CALL dbcsr_release(matrix_work)
       CALL timestop(handle)
 
-   END SUBROUTINE transform_m_orth_img_ptrb   
+   END SUBROUTINE transform_m_orth_img_ptrb
 END MODULE ec_orth_solver

@@ -16,31 +16,28 @@
 !> \author MI
 ! **************************************************************************************************
 MODULE qs_linres_op
-   USE atomic_kind_types,               ONLY: atomic_kind_type
    USE cell_types,                      ONLY: cell_type,&
                                               pbc
-   ! USE core_ppnl,                       ONLY: build_ppnl_com  
+   ! USE core_ppnl,                       ONLY: build_ppnl_com
+   USE commutator_rpnl,                 ONLY: build_com_mom_nl
    USE cp_array_utils,                  ONLY: cp_2d_i_p_type,&
                                               cp_2d_r_p_type
    USE cp_blacs_env,                    ONLY: cp_blacs_env_type
    USE cp_cfm_basic_linalg,             ONLY: cp_cfm_solve
    USE cp_cfm_types,                    ONLY: cp_cfm_create,&
                                               cp_cfm_get_info,&
-                                              cp_cfm_type,&
                                               cp_cfm_release,&
-                                              cp_cfm_set_all
-   USE commutator_rpnl,                 ONLY: build_com_mom_nl
+                                              cp_cfm_set_all,&
+                                              cp_cfm_type
    USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_api,                    ONLY: &
-        dbcsr_convert_offsets_to_sizes, dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, &
-        dbcsr_distribution_type, dbcsr_get_block_p, dbcsr_iterator_blocks_left, &
-        dbcsr_iterator_next_block, dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, &
-        dbcsr_p_type, dbcsr_set, dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, &
-        dbcsr_print, dbcsr_add, dbcsr_desymmetrize, dbcsr_type_symmetric,&
-        dbcsr_scale
+        dbcsr_add, dbcsr_convert_offsets_to_sizes, dbcsr_copy, dbcsr_create, &
+        dbcsr_deallocate_matrix, dbcsr_desymmetrize, dbcsr_distribution_type, dbcsr_get_block_p, &
+        dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, dbcsr_iterator_start, &
+        dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_p_type, dbcsr_print, dbcsr_set, &
+        dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry
    USE cp_dbcsr_contrib,                ONLY: dbcsr_checksum
    USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
-   USE cp_dbcsr_diag,                   ONLY: cp_dbcsr_power
    USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
                                               copy_fm_to_dbcsr,&
                                               cp_dbcsr_sm_fm_multiply,&
@@ -50,23 +47,24 @@ MODULE qs_linres_op
    USE cp_fm_struct,                    ONLY: cp_fm_struct_create,&
                                               cp_fm_struct_release,&
                                               cp_fm_struct_type
-   USE cp_fm_types,                     ONLY: &
-        cp_fm_create, cp_fm_get_info, cp_fm_get_submatrix, cp_fm_p_type, cp_fm_release, &
-        cp_fm_set_all, cp_fm_set_submatrix, cp_fm_to_fm, cp_fm_type
+   USE cp_fm_types,                     ONLY: cp_fm_create,&
+                                              cp_fm_get_info,&
+                                              cp_fm_get_submatrix,&
+                                              cp_fm_release,&
+                                              cp_fm_set_all,&
+                                              cp_fm_set_submatrix,&
+                                              cp_fm_to_fm,&
+                                              cp_fm_type
    USE cp_log_handling,                 ONLY: cp_get_default_logger,&
                                               cp_logger_type,&
                                               cp_to_string
    USE cp_output_handling,              ONLY: cp_print_key_finished_output,&
                                               cp_print_key_unit_nr
-   USE message_passing,                   ONLY: mp_para_env_type
-   USE qs_dcdr_utils,                   ONLY: multiply_localization,shift_wannier_into_cell
    USE input_constants,                 ONLY: current_orb_center_wannier
    USE input_section_types,             ONLY: section_vals_get_subs_vals,&
-                                              section_vals_type, section_vals_val_get
-   USE iterate_matrix,                  ONLY: matrix_sqrt_Newton_Schulz,&
-                                              matrix_sqrt_proot                                              
+                                              section_vals_type,&
+                                              section_vals_val_get
    USE kinds,                           ONLY: dp
-   USE qs_linres_types,                 ONLY: dcdr_env_type
    USE mathconstants,                   ONLY: twopi
    USE message_passing,                 ONLY: mp_para_env_type
    USE molecule_types,                  ONLY: molecule_of_atom,&
@@ -91,8 +89,9 @@ MODULE qs_linres_op
                                               issc_env_type,&
                                               linres_control_type,&
                                               polar_env_type
-   USE qs_loc_types,                    ONLY: get_qs_loc_env, qs_loc_env_type, &
-                                                localized_wfn_control_type
+   USE qs_loc_types,                    ONLY: get_qs_loc_env,&
+                                              localized_wfn_control_type,&
+                                              qs_loc_env_type
    USE qs_mo_types,                     ONLY: get_mo_set,&
                                               mo_set_type
    USE qs_moments,                      ONLY: build_berry_moment_matrix,&
@@ -100,7 +99,7 @@ MODULE qs_linres_op
    USE qs_neighbor_list_types,          ONLY: neighbor_list_set_p_type
    USE qs_operators_ao,                 ONLY: build_ang_mom_matrix,&
                                               build_lin_mom_matrix,&
-                                              rRc_xyz_ao, p_xyz_ao
+                                              rRc_xyz_ao
    USE qs_rho_types,                    ONLY: qs_rho_get,&
                                               qs_rho_type
    USE qs_spin_orbit,                   ONLY: build_pso_matrix
@@ -666,13 +665,14 @@ CONTAINS
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
 
-      LOGICAL                                            :: do_periodic, do_raman_vel, do_raman_wannier
+      LOGICAL                                            :: do_periodic, do_raman_vel, &
+                                                            do_raman_wannier
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(polar_env_type), POINTER                      :: polar_env
 
       CALL get_qs_env(qs_env=qs_env, dft_control=dft_control, polar_env=polar_env)
       CALL get_polar_env(polar_env=polar_env, do_periodic=do_periodic, do_raman_wannier=do_raman_wannier, &
-                           do_raman_vel=do_raman_vel)
+                         do_raman_vel=do_raman_vel)
       IF (dft_control%qs_control%dftb .OR. dft_control%qs_control%xtb) THEN
          IF (do_periodic) THEN
             CALL polar_tb_operators_berry(qs_env)
@@ -683,11 +683,11 @@ CONTAINS
          IF (do_periodic) THEN
             CALL polar_operators_berry(qs_env)
          ELSE IF (do_raman_wannier) THEN
-               CALL polar_operators_local_wannier(qs_env)
+            CALL polar_operators_local_wannier(qs_env)
          ELSE IF (do_raman_vel) THEN
             CALL polar_operators_velocity_mo(qs_env)
          ELSE
-            CALL polar_operators_local(qs_env)            
+            CALL polar_operators_local(qs_env)
          END IF
       END IF
 
@@ -703,11 +703,13 @@ CONTAINS
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
 
-      LOGICAL                                            :: do_periodic, do_raman_vel, do_raman_wannier
-      ! TYPE(dcdr_env_type)                                :: dcdr_env
-      ! LOGICAL                                            :: localized_psi0 = .FALSE.
+      LOGICAL                                            :: do_periodic, do_raman_vel, &
+                                                            do_raman_wannier
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(polar_env_type), POINTER                      :: polar_env
+
+! TYPE(dcdr_env_type)                                :: dcdr_env
+! LOGICAL                                            :: localized_psi0 = .FALSE.
 
       CALL get_qs_env(qs_env=qs_env, dft_control=dft_control, polar_env=polar_env)
       CALL get_polar_env(polar_env=polar_env, do_raman_wannier=do_raman_wannier, do_raman_vel=do_raman_vel, &
@@ -717,7 +719,7 @@ CONTAINS
       ELSE IF (do_raman_vel) THEN
          CALL polar_operators_velocity_ao(qs_env)
       ELSE IF (do_periodic) THEN
-         CALL polar_operators_berry_ao(qs_env)         
+         CALL polar_operators_berry_ao(qs_env)
       ELSE
          CALL polar_operators_local_ao(qs_env)
       END IF
@@ -910,40 +912,42 @@ CONTAINS
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
 
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'polar_operators_berry'
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'polar_operators_berry_ao'
       COMPLEX(KIND=dp), PARAMETER                        :: one = (1.0_dp, 0.0_dp), &
                                                             zero = (0.0_dp, 0.0_dp)
 
       COMPLEX(DP)                                        :: zdet, zdeta
-      INTEGER                                            :: handle, i, idim, ispin, nao, nmo, &
-                                                            nspins, tmp_dim, z!, n_dependent
-      INTEGER                                            :: nfullrows_total, nfullcols_total                                   
+      INTEGER                                            :: handle, i, idim, ispin, nao, &
+                                                            nfullcols_total, nfullrows_total, nmo, &
+                                                            nspins, tmp_dim, z
       LOGICAL                                            :: do_periodic
-      REAL(dp)                                           :: kvec(3)!, maxocc
+      REAL(dp)                                           :: kvec(3)
       REAL(KIND=dp)                                      :: eps_filter
-      TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
       TYPE(cell_type), POINTER                           :: cell
+      TYPE(cp_blacs_env_type), POINTER                   :: blacs_env
       TYPE(cp_cfm_type), ALLOCATABLE, DIMENSION(:)       :: eigrmat
       TYPE(cp_cfm_type), ALLOCATABLE, DIMENSION(:, :)    :: inv_mat
-      TYPE(cp_fm_struct_type), POINTER                   :: tmp_fm_struct
-      TYPE(cp_fm_struct_type), POINTER                   :: fm_struct
+      TYPE(cp_fm_struct_type), POINTER                   :: fm_struct, tmp_fm_struct
+      TYPE(cp_fm_type)                                   :: fm_matrix, fm_matrixb
       TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:, :)     :: op_fm_set, opvec
       TYPE(cp_fm_type), ALLOCATABLE, DIMENSION(:, :, :)  :: inv_work
       TYPE(cp_fm_type), DIMENSION(:, :), POINTER         :: dBerry_psi0
       TYPE(cp_fm_type), POINTER                          :: mo_coeff
-      TYPE(cp_fm_type)                                   :: fm_matrix, fm_matrixb
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, matrix_p, rho_ao
-      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_nosym_temp, dBerry_psi0_ao
-      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: matrix_nosym_temp2
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_p, matrix_s, rho_ao
+      TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: dBerry_psi0_ao, matrix_nosym_temp, &
+                                                            matrix_nosym_temp2
       TYPE(dbcsr_type), POINTER                          :: cosmat, sinmat, temp_dbcsr
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(linres_control_type), POINTER                 :: linres_control
       TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos
       TYPE(mp_para_env_type), POINTER                    :: para_env
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-      POINTER                                            :: sab_all
+         POINTER                                         :: sab_all
       TYPE(polar_env_type), POINTER                      :: polar_env
       TYPE(qs_rho_type), POINTER                         :: rho
+
+!, n_dependent
+!, maxocc
 
       CALL timeset(routineN, handle)
 
@@ -985,11 +989,10 @@ CONTAINS
          ! A bit to allocate for the wavefunction
          DO ispin = 1, dft_control%nspins
 
-
             NULLIFY (fm_struct)
             CALL dbcsr_get_info(matrix_s(1)%matrix, nfullrows_total=nfullrows_total, nfullcols_total=nfullcols_total)
             CALL cp_fm_struct_create(fm_struct, context=blacs_env, nrow_global=nfullrows_total, &
-                                    ncol_global=nfullcols_total, para_env=para_env)
+                                     ncol_global=nfullcols_total, para_env=para_env)
             CALL cp_fm_create(fm_matrix, fm_struct, name="fm_matrix")
             CALL cp_fm_create(fm_matrixb, fm_struct, name="fm_matrixb")
 
@@ -1011,7 +1014,7 @@ CONTAINS
             CALL cp_cfm_create(eigrmat(ispin), fm_struct)
             CALL cp_fm_struct_release(fm_struct)
          END DO
-         
+
          ! create density matrix P0
          NULLIFY (matrix_p)
          CALL dbcsr_allocate_matrix_set(matrix_p, nspins)
@@ -1022,7 +1025,7 @@ CONTAINS
                               matrix_type=dbcsr_type_no_symmetry)
             CALL dbcsr_desymmetrize(rho_ao(ispin)%matrix, matrix_p(ispin)%matrix)
          END DO
-        
+
          ! temporary no_symmetry matrix:
          CALL dbcsr_allocate_matrix_set(matrix_nosym_temp, 4, nspins)
          CALL dbcsr_allocate_matrix_set(matrix_nosym_temp2, 4, nspins)
@@ -1040,7 +1043,7 @@ CONTAINS
                                  matrix_type=dbcsr_type_no_symmetry)
                CALL cp_dbcsr_alloc_block_from_nbl(matrix_nosym_temp2(i, ispin)%matrix, sab_all)
                CALL dbcsr_set(matrix_nosym_temp2(i, ispin)%matrix, 0._dp)
-           
+
             END DO
          END DO
 
@@ -1074,9 +1077,6 @@ CONTAINS
                CALL dbcsr_copy(matrix_nosym_temp(4, ispin)%matrix, matrix_nosym_temp(1, ispin)%matrix)
                CALL copy_dbcsr_to_fm(matrix_nosym_temp(1, ispin)%matrix, fm_matrix)
 
-
-
-
                CALL dbcsr_desymmetrize(sinmat, matrix_nosym_temp2(1, ispin)%matrix)
                CALL dbcsr_copy(matrix_nosym_temp2(4, ispin)%matrix, matrix_nosym_temp2(1, ispin)%matrix)
                CALL copy_dbcsr_to_fm(matrix_nosym_temp2(1, ispin)%matrix, fm_matrixb)
@@ -1084,13 +1084,12 @@ CONTAINS
                ! CALL dbcsr_print(matrix_nosym_temp(1, ispin)%matrix, matlab_format=.TRUE.)
                ! CALL dbcsr_print(matrix_nosym_temp2(1, ispin)%matrix, matlab_format=.TRUE.)
 
-
                ! CALL dbcsr_multiply("N", "N", 1.0_dp, matrix_p(ispin)%matrix, matrix_nosym_temp(1, ispin)%matrix, &
                !                     0.0_dp, matrix_nosym_temp(2, ispin)%matrix, filter_eps=eps_filter, retain_sparsity=.FALSE.)
                ! CALL dbcsr_multiply("N", "N", 1.0_dp, matrix_nosym_temp(2, ispin)%matrix, matrix_p(ispin)%matrix, &
                !                     0.0_dp, matrix_nosym_temp(3, ispin)%matrix, filter_eps=eps_filter, retain_sparsity=.FALSE.)
 
-               ! CALL cp_dbcsr_power(matrix_nosym_temp(1, ispin)%matrix, -1.0_dp, 1.0E-7_dp, n_dependent, & 
+               ! CALL cp_dbcsr_power(matrix_nosym_temp(1, ispin)%matrix, -1.0_dp, 1.0E-7_dp, n_dependent, &
                !                     para_env, blacs_env) !1.0E-7 ev qunenching thresh
 
                ! CALL dbcsr_desymmetrize(sinmat, matrix_nosym_temp2(1, ispin)%matrix)
@@ -1101,14 +1100,14 @@ CONTAINS
                ! CALL dbcsr_multiply("N", "N", 1.0_dp, matrix_nosym_temp2(2, ispin)%matrix, matrix_p(ispin)%matrix, &
                !                     0.0_dp, matrix_nosym_temp2(3, ispin)%matrix, filter_eps=eps_filter, retain_sparsity=.FALSE.)
 
-               ! CALL cp_dbcsr_power(matrix_nosym_temp2(1, ispin)%matrix, -1.0_dp, 1.0E-7_dp, n_dependent, & 
+               ! CALL cp_dbcsr_power(matrix_nosym_temp2(1, ispin)%matrix, -1.0_dp, 1.0E-7_dp, n_dependent, &
                !                     para_env, blacs_env) !1.0E-7 ev qunenching thresh
 
                ! CALL dbcsr_multiply("N", "N", 1.0_dp, matrix_nosym_temp(4, ispin)%matrix, matrix_nosym_temp2(1, ispin)%matrix, &
-               !                     0.0_dp, matrix_nosym_temp2(3, ispin)%matrix, filter_eps=eps_filter, retain_sparsity=.FALSE.)     
+               !                     0.0_dp, matrix_nosym_temp2(3, ispin)%matrix, filter_eps=eps_filter, retain_sparsity=.FALSE.)
                ! CALL dbcsr_multiply("N", "N", -1.0_dp, matrix_nosym_temp(1, ispin)%matrix, matrix_nosym_temp2(4, ispin)%matrix, &
-               !                     1.0_dp, matrix_nosym_temp2(3, ispin)%matrix, filter_eps=eps_filter, retain_sparsity=.FALSE.) 
-                                   
+               !                     1.0_dp, matrix_nosym_temp2(3, ispin)%matrix, filter_eps=eps_filter, retain_sparsity=.FALSE.)
+
                ! CALL dbcsr_copy(dBerry_psi0_ao(i, ispin)%matrix, matrix_nosym_temp2(3, ispin)%matrix)
             END DO
 
@@ -1125,7 +1124,7 @@ CONTAINS
                CALL cp_cfm_set_all(inv_mat(i, ispin), zero, one)
                CALL cp_cfm_solve(eigrmat(ispin), inv_mat(i, ispin), zdeta)
             END DO
-            
+
             ! Compute the derivative and add the result to mo_derivatives
             DO ispin = 1, dft_control%nspins
                CALL cp_cfm_get_info(eigrmat(ispin), ncol_local=tmp_dim)
@@ -1139,20 +1138,20 @@ CONTAINS
                CALL copy_fm_to_dbcsr(inv_work(2, i, ispin), matrix_nosym_temp2(2, ispin)%matrix)
 
                CALL dbcsr_multiply("N", "N", 1.0_dp, matrix_nosym_temp(4, ispin)%matrix, matrix_nosym_temp2(2, ispin)%matrix, &
-                                   0.0_dp, matrix_nosym_temp(3, ispin)%matrix, filter_eps=eps_filter, retain_sparsity=.FALSE.)     
-                              
+                                   0.0_dp, matrix_nosym_temp(3, ispin)%matrix, filter_eps=eps_filter, retain_sparsity=.FALSE.)
+
                CALL dbcsr_multiply("N", "N", 1.0_dp, matrix_nosym_temp2(4, ispin)%matrix, matrix_nosym_temp(2, ispin)%matrix, &
-                                   1.0_dp, matrix_nosym_temp(3, ispin)%matrix, filter_eps=eps_filter, retain_sparsity=.FALSE.) 
+                                   1.0_dp, matrix_nosym_temp(3, ispin)%matrix, filter_eps=eps_filter, retain_sparsity=.FALSE.)
 
                ! CALL dbcsr_copy(dBerry_psi0_ao(i, ispin)%matrix, matrix_nosym_temp(3, ispin)%matrix)
-               
-               CALL dbcsr_multiply("N", "N", 1.0_dp, matrix_p(ispin)%matrix, matrix_nosym_temp(3, ispin)%matrix, &
-                                   0.0_dp, matrix_nosym_temp(1, ispin)%matrix, filter_eps=eps_filter, retain_sparsity=.FALSE.)                                    
-               CALL dbcsr_multiply("N", "N", 1.0_dp, matrix_nosym_temp(1, ispin)%matrix, matrix_p(ispin)%matrix, &
-                                   1.0_dp, dBerry_psi0_ao(i, ispin)%matrix, filter_eps=eps_filter, retain_sparsity=.FALSE.) 
 
-               ! CALL dbcsr_desymmetrize(dBerry_psi0_ao(i, ispin)%matrix, matrix_nosym_temp(2, ispin)%matrix)                                   
-               CALL dbcsr_print(matrix_nosym_temp(3, ispin)%matrix, matlab_format=.true.)   
+               CALL dbcsr_multiply("N", "N", 1.0_dp, matrix_p(ispin)%matrix, matrix_nosym_temp(3, ispin)%matrix, &
+                                   0.0_dp, matrix_nosym_temp(1, ispin)%matrix, filter_eps=eps_filter, retain_sparsity=.FALSE.)
+               CALL dbcsr_multiply("N", "N", 1.0_dp, matrix_nosym_temp(1, ispin)%matrix, matrix_p(ispin)%matrix, &
+                                   1.0_dp, dBerry_psi0_ao(i, ispin)%matrix, filter_eps=eps_filter, retain_sparsity=.FALSE.)
+
+               ! CALL dbcsr_desymmetrize(dBerry_psi0_ao(i, ispin)%matrix, matrix_nosym_temp(2, ispin)%matrix)
+               CALL dbcsr_print(matrix_nosym_temp(3, ispin)%matrix, matlab_format=.TRUE.)
             END DO
 
          END DO !x/y/z-direction
@@ -1192,33 +1191,28 @@ CONTAINS
 !> \par History
 !>      01.2013 created [SL]
 !>      06.2018 polar_env integrated into qs_env (MK)
-!> \author Ravi, 
+!> \author Ravi,
 ! **************************************************************************************************
    SUBROUTINE polar_operators_local_wannier(qs_env)
       TYPE(qs_environment_type), POINTER                 :: qs_env
 
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'polar_operators_local'
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'polar_operators_local_wannier'
 
-      INTEGER                                            :: handle, i, j, ispin, nmo, nao, nspins, icenter, &
-                                                            natom, idir, max_nbr_center, nmoloc
-      INTEGER                                            :: is, istate, max_states, nstate, nstate_list(2)
-      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: mapping_wannier_atom
-      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: state_list
-      LOGICAL                                            :: do_raman_wannier, do_periodic
-      REAL(dp), DIMENSION(:, :), POINTER                 :: center_array
-      ! REAL(KIND=dp), DIMENSION(3)                        :: ref_pt
-      Real(dp)                                           :: smallest_r, tmp_r
+      INTEGER :: handle, i, icenter, idir, is, ispin, istate, j, max_nbr_center, max_states, nao, &
+         natom, nmo, nmoloc, nspins, nstate, nstate_list(2)
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: mapping_wannier_atom, state_list
+      LOGICAL                                            :: do_periodic, do_raman_wannier
+      REAL(dp)                                           :: smallest_r, tmp_r
       REAL(dp), DIMENSION(3)                             :: distance, r_shifted
+      REAL(dp), DIMENSION(:, :), POINTER                 :: center_array
       TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_2d_r_p_type), DIMENSION(:), POINTER        :: centers_set
-      ! TYPE(cp_2d_i_p_type), DIMENSION(:), POINTER        :: center_list      
-      TYPE(cp_fm_type), DIMENSION(:, :), POINTER         :: dBerry_psi0, tmp_fm, r_psi0
-      TYPE(cp_fm_type), POINTER                          :: mo_coeff
       TYPE(cp_fm_struct_type), POINTER                   :: tmp_fm_struct
-      ! TYPE(current_env_type)                             :: current_env
-      TYPE(dcdr_env_type)                                :: dcdr_env
+      TYPE(cp_fm_type), DIMENSION(:, :), POINTER         :: dBerry_psi0, r_psi0, tmp_fm
+      TYPE(cp_fm_type), POINTER                          :: mo_coeff
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: dipmat, matrix_s
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: dBerry_psi0_ao
+      TYPE(dcdr_env_type)                                :: dcdr_env
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(linres_control_type), POINTER                 :: linres_control
       TYPE(localized_wfn_control_type), POINTER          :: localized_wfn_control
@@ -1228,6 +1222,10 @@ CONTAINS
       TYPE(qs_loc_env_type), POINTER                     :: qs_loc_env
       TYPE(section_vals_type), POINTER                   :: dcdr_section
       TYPE(wannier_centres_type), DIMENSION(:), POINTER  :: wc
+
+! REAL(KIND=dp), DIMENSION(3)                        :: ref_pt
+! TYPE(cp_2d_i_p_type), DIMENSION(:), POINTER        :: center_list
+! TYPE(current_env_type)                             :: current_env
 
       CALL timeset(routineN, handle)
       NULLIFY (particle_set, cell)
@@ -1256,7 +1254,7 @@ CONTAINS
       CALL get_polar_env(polar_env=polar_env, &
                          do_raman_wannier=do_raman_wannier, &
                          do_periodic=do_periodic, &
-                         dBerry_psi0_ao=dBerry_psi0_ao,&
+                         dBerry_psi0_ao=dBerry_psi0_ao, &
                          dBerry_psi0=dBerry_psi0)
 
       ! CALL get_current_env(current_env=current_env, &
@@ -1269,7 +1267,7 @@ CONTAINS
 
       ! check that the number of localized states is equal to the number of states
       nmoloc = SIZE(linres_control%qs_loc_env%localized_wfn_control%centers_set(1)%array, 2)
-      IF (nmoloc .NE. nmo) THEN
+      IF (nmoloc /= nmo) THEN
          CPABORT("The number of localized functions is not equal to the number of states.")
       END IF
 
@@ -1330,47 +1328,47 @@ CONTAINS
          END SELECT
       END DO
 
-         ! Map wannier functions to atoms
-         IF (nspins == 1) THEN
-            max_nbr_center = dcdr_env%nbr_center(1)
-         ELSE
-            max_nbr_center = MAX(dcdr_env%nbr_center(1), dcdr_env%nbr_center(2))
-         END IF
-         ALLOCATE (mapping_wannier_atom(max_nbr_center, nspins))
-         centers_set => dcdr_env%centers_set
+      ! Map wannier functions to atoms
+      IF (nspins == 1) THEN
+         max_nbr_center = dcdr_env%nbr_center(1)
+      ELSE
+         max_nbr_center = MAX(dcdr_env%nbr_center(1), dcdr_env%nbr_center(2))
+      END IF
+      ALLOCATE (mapping_wannier_atom(max_nbr_center, nspins))
+      centers_set => dcdr_env%centers_set
 
-         DO ispin = 1, nspins
-            DO icenter = 1, dcdr_env%nbr_center(ispin)
-               ! For every center we check which atom is closest
-               CALL shift_wannier_into_cell(r=centers_set(ispin)%array(1:3, icenter), &
-                                            cell=cell, &
-                                            r_shifted=r_shifted)
+      DO ispin = 1, nspins
+         DO icenter = 1, dcdr_env%nbr_center(ispin)
+            ! For every center we check which atom is closest
+            CALL shift_wannier_into_cell(r=centers_set(ispin)%array(1:3, icenter), &
+                                         cell=cell, &
+                                         r_shifted=r_shifted)
 
-               smallest_r = HUGE(0._dp)
-               DO i = 1, natom
-                  distance = pbc(r_shifted, particle_set(i)%r(1:3), cell)
-                  tmp_r = SUM(distance**2)
-                  IF (tmp_r < smallest_r) THEN
-                     mapping_wannier_atom(icenter, ispin) = i
-                     smallest_r = tmp_r
-                  END IF
-               END DO
+            smallest_r = HUGE(0._dp)
+            DO i = 1, natom
+               distance = pbc(r_shifted, particle_set(i)%r(1:3), cell)
+               tmp_r = SUM(distance**2)
+               IF (tmp_r < smallest_r) THEN
+                  mapping_wannier_atom(icenter, ispin) = i
+                  smallest_r = tmp_r
+               END IF
             END DO
          END DO
+      END DO
       ! NULLIFY(tmp_fm(nspins,3))
       ! NULLIFY(r_psi0(nspins,3))
 
-      ALLOCATE(tmp_fm(nspins,3))
-      ALLOCATE(r_psi0(nspins,3))
+      ALLOCATE (tmp_fm(nspins, 3))
+      ALLOCATE (r_psi0(nspins, 3))
 
-      DO ispin=1, nspins
+      DO ispin = 1, nspins
          CALL get_mo_set(mo_set=mos(ispin), mo_coeff=mo_coeff)
          CALL cp_fm_get_info(mo_coeff, ncol_global=nmo, nrow_global=nao)
          NULLIFY (tmp_fm_struct)
          CALL cp_fm_struct_create(tmp_fm_struct, nrow_global=nao, &
-                                 ncol_global=nmo, &
-                                 context=mo_coeff%matrix_struct%context)
-         DO idir = 1,3
+                                  ncol_global=nmo, &
+                                  context=mo_coeff%matrix_struct%context)
+         DO idir = 1, 3
             CALL cp_fm_create(tmp_fm(ispin, idir), tmp_fm_struct)
             CALL cp_fm_create(r_psi0(ispin, idir), tmp_fm_struct)
             CALL cp_fm_set_all(tmp_fm(ispin, idir), 0.0_dp)
@@ -1389,22 +1387,22 @@ CONTAINS
          END DO
 
          polar_env%nbr_center(1) = dcdr_env%nbr_center(1)
-         DO ispin = 1,nspins
+         DO ispin = 1, nspins
             DO icenter = 1, dcdr_env%nbr_center(ispin)
                CALL build_local_moment_matrix(qs_env, dipmat, 1, ref_point=centers_set(ispin)%array(1:3, icenter))
                DO i = 1, 3
-                  CALL cp_fm_set_all(tmp_fm(ispin,i),0.0_dp)
-                  CALL cp_dbcsr_sm_fm_multiply(dipmat(i)%matrix, mo_coeff,&
-                                                tmp_fm(ispin, i),ncol=nmo,&
-                                                alpha=-1.0_dp)
-                  DO j = dcdr_env%center_list(ispin)%array(1,icenter),dcdr_env%center_list(ispin)%array(1,icenter+1)-1
-                     istate = dcdr_env%center_list(ispin)%array(2,j)
-                     CALL cp_fm_to_fm(tmp_fm(ispin,i),r_psi0(ispin, i),1,istate,istate)
-                  ENDDO
+                  CALL cp_fm_set_all(tmp_fm(ispin, i), 0.0_dp)
+                  CALL cp_dbcsr_sm_fm_multiply(dipmat(i)%matrix, mo_coeff, &
+                                               tmp_fm(ispin, i), ncol=nmo, &
+                                               alpha=-1.0_dp)
+                  DO j = dcdr_env%center_list(ispin)%array(1, icenter), dcdr_env%center_list(ispin)%array(1, icenter + 1) - 1
+                     istate = dcdr_env%center_list(ispin)%array(2, j)
+                     CALL cp_fm_to_fm(tmp_fm(ispin, i), r_psi0(ispin, i), 1, istate, istate)
+                  END DO
                END DO !idir
-            END DO !i 
-            DO i=1,3
-               CALL cp_fm_to_fm(r_psi0(ispin,i), dBerry_psi0(i, ispin))
+            END DO !i
+            DO i = 1, 3
+               CALL cp_fm_to_fm(r_psi0(ispin, i), dBerry_psi0(i, ispin))
             END DO
          END DO
 
@@ -1412,15 +1410,15 @@ CONTAINS
             CALL dbcsr_deallocate_matrix(dipmat(i)%matrix)
          END DO
          DEALLOCATE (dipmat)
-         DO ispin = 1,nspins
-            DO i=1,3
-               CALL cp_fm_release(r_psi0(ispin,i))
-               CALL cp_fm_release(tmp_fm(ispin,i))
-            ENDDO
-         ENDDO
+         DO ispin = 1, nspins
+            DO i = 1, 3
+               CALL cp_fm_release(r_psi0(ispin, i))
+               CALL cp_fm_release(tmp_fm(ispin, i))
+            END DO
+         END DO
 
-         DEALLOCATE(tmp_fm)
-         DEALLOCATE(r_psi0)
+         DEALLOCATE (tmp_fm)
+         DEALLOCATE (r_psi0)
 
       END IF ! do_raman
 
@@ -1428,39 +1426,34 @@ CONTAINS
 
    END SUBROUTINE polar_operators_local_wannier
 
-
 ! **************************************************************************************************
 !> \brief Calculate the periodic electric dipole moment operator having center at the
 !>           Wannier centers
 !>  by Ravi Kumar, May 2023
-
+!> \param qs_env ...
 ! **************************************************************************************************
+
    SUBROUTINE polar_operators_local_wannier_ao(qs_env)
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
 
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'polar_operators_local'
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'polar_operators_local_wannier_ao'
 
-      INTEGER                                            :: handle, i, ispin, nmo, nao, nspins, icenter, &
-                                                            natom, idir, max_nbr_center, nmoloc
-      INTEGER                                            :: is, istate, max_states, nstate, nstate_list(2)
-      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: mapping_wannier_atom
-      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: state_list
-      LOGICAL                                            :: do_raman_wannier, do_periodic
-      REAL(dp), DIMENSION(:, :), POINTER                 :: center_array
-      ! REAL(KIND=dp), DIMENSION(3)                        :: ref_pt
-      Real(dp)                                           :: smallest_r, tmp_r
+      INTEGER :: handle, i, icenter, idir, is, ispin, istate, max_nbr_center, max_states, nao, &
+         natom, nmo, nmoloc, nspins, nstate, nstate_list(2)
+      INTEGER, ALLOCATABLE, DIMENSION(:, :)              :: mapping_wannier_atom, state_list
+      LOGICAL                                            :: do_periodic, do_raman_wannier
+      REAL(dp)                                           :: smallest_r, tmp_r
       REAL(dp), DIMENSION(3)                             :: distance, r_shifted
+      REAL(dp), DIMENSION(:, :), POINTER                 :: center_array
       TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_2d_r_p_type), DIMENSION(:), POINTER        :: centers_set
-      ! TYPE(cp_2d_i_p_type), DIMENSION(:), POINTER        :: center_list      
-      TYPE(cp_fm_type), DIMENSION(:, :), POINTER         :: dBerry_psi0, tmp_fm, r_psi0
-      TYPE(cp_fm_type), POINTER                          :: mo_coeff
       TYPE(cp_fm_struct_type), POINTER                   :: tmp_fm_struct
-      ! TYPE(current_env_type)                             :: current_env
-      TYPE(dcdr_env_type)                                :: dcdr_env
+      TYPE(cp_fm_type), DIMENSION(:, :), POINTER         :: dBerry_psi0, r_psi0, tmp_fm
+      TYPE(cp_fm_type), POINTER                          :: mo_coeff
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: dipmat, matrix_s
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: dBerry_psi0_ao
+      TYPE(dcdr_env_type)                                :: dcdr_env
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(linres_control_type), POINTER                 :: linres_control
       TYPE(localized_wfn_control_type), POINTER          :: localized_wfn_control
@@ -1470,6 +1463,10 @@ CONTAINS
       TYPE(qs_loc_env_type), POINTER                     :: qs_loc_env
       TYPE(section_vals_type), POINTER                   :: dcdr_section
       TYPE(wannier_centres_type), DIMENSION(:), POINTER  :: wc
+
+! REAL(KIND=dp), DIMENSION(3)                        :: ref_pt
+! TYPE(cp_2d_i_p_type), DIMENSION(:), POINTER        :: center_list
+! TYPE(current_env_type)                             :: current_env
 
       CALL timeset(routineN, handle)
       NULLIFY (particle_set, cell)
@@ -1498,7 +1495,7 @@ CONTAINS
       CALL get_polar_env(polar_env=polar_env, &
                          do_raman_wannier=do_raman_wannier, &
                          do_periodic=do_periodic, &
-                         dBerry_psi0_ao=dBerry_psi0_ao,&
+                         dBerry_psi0_ao=dBerry_psi0_ao, &
                          dBerry_psi0=dBerry_psi0)
 
       ! CALL get_current_env(current_env=current_env, &
@@ -1511,7 +1508,7 @@ CONTAINS
 
       ! check that the number of localized states is equal to the number of states
       nmoloc = SIZE(linres_control%qs_loc_env%localized_wfn_control%centers_set(1)%array, 2)
-      IF (nmoloc .NE. nmo) THEN
+      IF (nmoloc /= nmo) THEN
          CPABORT("The number of localized functions is not equal to the number of states.")
       END IF
 
@@ -1572,47 +1569,47 @@ CONTAINS
          END SELECT
       END DO
 
-         ! Map wannier functions to atoms
-         IF (nspins == 1) THEN
-            max_nbr_center = dcdr_env%nbr_center(1)
-         ELSE
-            max_nbr_center = MAX(dcdr_env%nbr_center(1), dcdr_env%nbr_center(2))
-         END IF
-         ALLOCATE (mapping_wannier_atom(max_nbr_center, nspins))
-         centers_set => dcdr_env%centers_set
+      ! Map wannier functions to atoms
+      IF (nspins == 1) THEN
+         max_nbr_center = dcdr_env%nbr_center(1)
+      ELSE
+         max_nbr_center = MAX(dcdr_env%nbr_center(1), dcdr_env%nbr_center(2))
+      END IF
+      ALLOCATE (mapping_wannier_atom(max_nbr_center, nspins))
+      centers_set => dcdr_env%centers_set
 
-         DO ispin = 1, nspins
-            DO icenter = 1, dcdr_env%nbr_center(ispin)
-               ! For every center we check which atom is closest
-               CALL shift_wannier_into_cell(r=centers_set(ispin)%array(1:3, icenter), &
-                                            cell=cell, &
-                                            r_shifted=r_shifted)
+      DO ispin = 1, nspins
+         DO icenter = 1, dcdr_env%nbr_center(ispin)
+            ! For every center we check which atom is closest
+            CALL shift_wannier_into_cell(r=centers_set(ispin)%array(1:3, icenter), &
+                                         cell=cell, &
+                                         r_shifted=r_shifted)
 
-               smallest_r = HUGE(0._dp)
-               DO i = 1, natom
-                  distance = pbc(r_shifted, particle_set(i)%r(1:3), cell)
-                  tmp_r = SUM(distance**2)
-                  IF (tmp_r < smallest_r) THEN
-                     mapping_wannier_atom(icenter, ispin) = i
-                     smallest_r = tmp_r
-                  END IF
-               END DO
+            smallest_r = HUGE(0._dp)
+            DO i = 1, natom
+               distance = pbc(r_shifted, particle_set(i)%r(1:3), cell)
+               tmp_r = SUM(distance**2)
+               IF (tmp_r < smallest_r) THEN
+                  mapping_wannier_atom(icenter, ispin) = i
+                  smallest_r = tmp_r
+               END IF
             END DO
          END DO
+      END DO
       ! NULLIFY(tmp_fm(nspins,3))
       ! NULLIFY(r_psi0(nspins,3))
 
-      ALLOCATE(tmp_fm(nspins,3))
-      ALLOCATE(r_psi0(nspins,3))
+      ALLOCATE (tmp_fm(nspins, 3))
+      ALLOCATE (r_psi0(nspins, 3))
 
-      DO ispin=1, nspins
+      DO ispin = 1, nspins
          CALL get_mo_set(mo_set=mos(ispin), mo_coeff=mo_coeff)
          CALL cp_fm_get_info(mo_coeff, ncol_global=nmo, nrow_global=nao)
          NULLIFY (tmp_fm_struct)
          CALL cp_fm_struct_create(tmp_fm_struct, nrow_global=nao, &
-                                 ncol_global=nmo, &
-                                 context=mo_coeff%matrix_struct%context)
-         DO idir = 1,3
+                                  ncol_global=nmo, &
+                                  context=mo_coeff%matrix_struct%context)
+         DO idir = 1, 3
             CALL cp_fm_create(tmp_fm(ispin, idir), tmp_fm_struct)
             CALL cp_fm_create(r_psi0(ispin, idir), tmp_fm_struct)
             CALL cp_fm_set_all(tmp_fm(ispin, idir), 0.0_dp)
@@ -1631,12 +1628,12 @@ CONTAINS
          END DO
 
          polar_env%nbr_center(1) = dcdr_env%nbr_center(1)
-         DO ispin = 1,nspins
+         DO ispin = 1, nspins
             ! DO icenter = 1,nbr_center(ispin)
             DO icenter = 1, dcdr_env%nbr_center(ispin)
                CALL build_local_moment_matrix(qs_env, dipmat, 1, ref_point=centers_set(ispin)%array(1:3, icenter))
             END DO
-            DO i=1, 3
+            DO i = 1, 3
                CALL dbcsr_copy(dBerry_psi0_ao(i, ispin)%matrix, dipmat(i)%matrix)
             END DO
          END DO
@@ -1645,19 +1642,19 @@ CONTAINS
             CALL dbcsr_deallocate_matrix(dipmat(i)%matrix)
          END DO
          DEALLOCATE (dipmat)
-         DO ispin = 1,nspins
-            DO i=1,3
-               CALL cp_fm_release(r_psi0(ispin,i))
-               CALL cp_fm_release(tmp_fm(ispin,i))
-            ENDDO
-         ENDDO
+         DO ispin = 1, nspins
+            DO i = 1, 3
+               CALL cp_fm_release(r_psi0(ispin, i))
+               CALL cp_fm_release(tmp_fm(ispin, i))
+            END DO
+         END DO
 
          DEALLOCATE (dcdr_env%centers_set(1)%array)
          DEALLOCATE (dcdr_env%center_list(1)%array)
          DEALLOCATE (dcdr_env%centers_set)
          DEALLOCATE (dcdr_env%center_list)
-         DEALLOCATE(tmp_fm)
-         DEALLOCATE(r_psi0)
+         DEALLOCATE (tmp_fm)
+         DEALLOCATE (r_psi0)
 
       END IF ! do_raman
 
@@ -2010,29 +2007,29 @@ CONTAINS
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
 
-      ! CHARACTER(LEN=*), PARAMETER :: routineN = 'polar_operators_local_ao'
-
       INTEGER                                            :: i, ispin, nspins
       LOGICAL                                            :: do_raman
+      TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_fm_type), DIMENSION(:, :), POINTER         :: dBerry_psi0
       TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: dipmat, matrix_s
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: dBerry_psi0_ao
-      TYPE(cell_type), POINTER                           :: cell
-      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
-      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
-      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-      POINTER                                            :: sab_orb, sap_ppnl
       TYPE(dft_control_type), POINTER                    :: dft_control
+      TYPE(neighbor_list_set_p_type), DIMENSION(:), &
+         POINTER                                         :: sab_orb, sap_ppnl
+      TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(polar_env_type), POINTER                      :: polar_env
+      TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
+
+! CHARACTER(LEN=*), PARAMETER :: routineN = 'polar_operators_local_ao'
 
       CALL get_qs_env(qs_env=qs_env, &
                       dft_control=dft_control, &
                       polar_env=polar_env, &
-                      cell=cell,&
-                      particle_set=particle_set,&
-                      qs_kind_set=qs_kind_set,&
-                      sab_orb=sab_orb,&
-                      sap_ppnl=sap_ppnl,&
+                      cell=cell, &
+                      particle_set=particle_set, &
+                      qs_kind_set=qs_kind_set, &
+                      sab_orb=sab_orb, &
+                      sap_ppnl=sap_ppnl, &
                       matrix_s=matrix_s)
 
       nspins = dft_control%nspins
@@ -2049,8 +2046,8 @@ CONTAINS
          DO i = 1, 3
             ALLOCATE (dipmat(i)%matrix)
             CALL dbcsr_create(dipmat(i)%matrix, template=matrix_s(1)%matrix, &
-            matrix_type=dbcsr_type_no_symmetry)
-            CALL cp_dbcsr_alloc_block_from_nbl(dipmat(i)%matrix,sab_orb)
+                              matrix_type=dbcsr_type_no_symmetry)
+            CALL cp_dbcsr_alloc_block_from_nbl(dipmat(i)%matrix, sab_orb)
             CALL dbcsr_copy(dipmat(i)%matrix, matrix_s(1)%matrix, 'dipole')
             CALL dbcsr_set(dipmat(i)%matrix, 0.0_dp)
          END DO
@@ -2066,7 +2063,7 @@ CONTAINS
          END DO
          DEALLOCATE (dipmat)
       END IF ! do_raman
- !     CALL timestop(handle)
+      !     CALL timestop(handle)
 
    END SUBROUTINE polar_operators_local_ao
 
@@ -2077,31 +2074,29 @@ CONTAINS
 !> \author Ravi Kumar
 ! **************************************************************************************************
    SUBROUTINE polar_operators_velocity_ao(qs_env)
- 
+
       TYPE(qs_environment_type), POINTER                 :: qs_env
-      INTEGER                                            :: i,idir,  ispin, nmo, nspins, natom
+
+      INTEGER                                            :: i, idir, ispin, natom, nmo, nspins
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: first_sgf, last_sgf
       INTEGER, DIMENSION(:), POINTER                     :: row_blk_sizes
       LOGICAL                                            :: do_raman_vel
-      TYPE(atomic_kind_type), DIMENSION(:), &
-      POINTER                                            :: atomic_kind_set
       TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_fm_type), DIMENSION(:, :), POINTER         :: dBerry_psi0
       TYPE(cp_fm_type), POINTER                          :: mo_coeff
       TYPE(dbcsr_distribution_type), POINTER             :: dbcsr_dist
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, grad_r, commute_mat
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: commute_mat, grad_r, matrix_s
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: dBerry_psi0_ao
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-      POINTER                                            :: sab_orb, sap_ppnl
+         POINTER                                         :: sab_orb, sap_ppnl
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(polar_env_type), POINTER                      :: polar_env
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
 
-
-      NULLIFY (grad_r, commute_mat, cell, qs_kind_set, particle_set, sap_ppnl, sab_orb,&
-               atomic_kind_set)
+      NULLIFY (grad_r, commute_mat, cell, qs_kind_set, particle_set, &
+               sap_ppnl, sab_orb)
 
       CALL get_qs_env(qs_env=qs_env, &
                       dft_control=dft_control, &
@@ -2111,7 +2106,7 @@ CONTAINS
                       qs_kind_set=qs_kind_set, &
                       particle_set=particle_set, &
                       sab_orb=sab_orb, &
-                      dbcsr_dist=dbcsr_dist,&
+                      dbcsr_dist=dbcsr_dist, &
                       sap_ppnl=sap_ppnl, &
                       matrix_s=matrix_s)
 
@@ -2122,81 +2117,81 @@ CONTAINS
                          dBerry_psi0=dBerry_psi0, &
                          dBerry_psi0_ao=dBerry_psi0_ao)
 
-!     Grad_r part of the dipole operator in velocity gauge 
+!     Grad_r part of the dipole operator in velocity gauge
 
       IF (do_raman_vel) THEN
-      ! build the linear momentum matrices
-      ! prepare for allocation
-         natom = SIZE(particle_set,1)
+         ! build the linear momentum matrices
+         ! prepare for allocation
+         natom = SIZE(particle_set, 1)
          ALLOCATE (first_sgf(natom))
          ALLOCATE (last_sgf(natom))
-         CALL get_particle_set(particle_set=particle_set,qs_kind_set=qs_kind_set,&
-                                 first_sgf=first_sgf,&
-                                 last_sgf=last_sgf)
-   ! prepare for allocation
+         CALL get_particle_set(particle_set=particle_set, qs_kind_set=qs_kind_set, &
+                               first_sgf=first_sgf, &
+                               last_sgf=last_sgf)
+         ! prepare for allocation
          ALLOCATE (row_blk_sizes(natom))
          CALL dbcsr_convert_offsets_to_sizes(first_sgf, row_blk_sizes, last_sgf)
-   ! 
-         DEALLOCATE (first_sgf,last_sgf)
+         !
+         DEALLOCATE (first_sgf, last_sgf)
 
-         CALL dbcsr_allocate_matrix_set(grad_r,3)
-         ALLOCATE(grad_r(1)%matrix)
+         CALL dbcsr_allocate_matrix_set(grad_r, 3)
+         ALLOCATE (grad_r(1)%matrix)
 
          CALL dbcsr_create(matrix=grad_r(1)%matrix, &
                            name="OP_P", &
-                           dist=dbcsr_dist, matrix_type=dbcsr_type_antisymmetric ,&
+                           dist=dbcsr_dist, matrix_type=dbcsr_type_antisymmetric, &
                            row_blk_size=row_blk_sizes, col_blk_size=row_blk_sizes, &
                            nze=0, mutable_work=.TRUE.)
 
-         CALL cp_dbcsr_alloc_block_from_nbl(grad_r(1)%matrix,sab_orb)
+         CALL cp_dbcsr_alloc_block_from_nbl(grad_r(1)%matrix, sab_orb)
          !
          ! DEALLOCATE(row_blk_sizes)
-         CALL dbcsr_set(grad_r(1)%matrix,0.0_dp)
-         DO idir = 2,3
-            ALLOCATE(grad_r(idir)%matrix)
-            CALL dbcsr_copy(grad_r(idir)%matrix,grad_r(1)%matrix,&
-                              "polar_env%op_p_ao"//"-"//TRIM(ADJUSTL(cp_to_string(idir))))
-            CALL dbcsr_set(grad_r(idir)%matrix,0.0_dp)
-         ENDDO
-         CALL build_lin_mom_matrix(qs_env,grad_r)
+         CALL dbcsr_set(grad_r(1)%matrix, 0.0_dp)
+         DO idir = 2, 3
+            ALLOCATE (grad_r(idir)%matrix)
+            CALL dbcsr_copy(grad_r(idir)%matrix, grad_r(1)%matrix, &
+                            "polar_env%op_p_ao"//"-"//TRIM(ADJUSTL(cp_to_string(idir))))
+            CALL dbcsr_set(grad_r(idir)%matrix, 0.0_dp)
+         END DO
+         CALL build_lin_mom_matrix(qs_env, grad_r)
 
 !now commutator [r,V_nl] needed for nonlocal pseudopotentials
 
-         CALL dbcsr_allocate_matrix_set(commute_mat,3)
-         ALLOCATE(commute_mat(1)%matrix)
+         CALL dbcsr_allocate_matrix_set(commute_mat, 3)
+         ALLOCATE (commute_mat(1)%matrix)
 
          CALL dbcsr_create(matrix=commute_mat(1)%matrix, &
                            name="OP_P", &
-                           dist=dbcsr_dist, matrix_type=dbcsr_type_antisymmetric ,&
+                           dist=dbcsr_dist, matrix_type=dbcsr_type_antisymmetric, &
                            row_blk_size=row_blk_sizes, col_blk_size=row_blk_sizes, &
                            nze=0, mutable_work=.TRUE.)
 
-         CALL cp_dbcsr_alloc_block_from_nbl(commute_mat(1)%matrix,sab_orb)
+         CALL cp_dbcsr_alloc_block_from_nbl(commute_mat(1)%matrix, sab_orb)
          !
-         DEALLOCATE(row_blk_sizes)
-         CALL dbcsr_set(commute_mat(1)%matrix,0.0_dp)
+         DEALLOCATE (row_blk_sizes)
+         CALL dbcsr_set(commute_mat(1)%matrix, 0.0_dp)
 
-         DO i = 2,3
-            ALLOCATE(commute_mat(i)%matrix)
-            CALL dbcsr_copy(commute_mat(i)%matrix,commute_mat(1)%matrix,&
-                              "KP_p"//TRIM(ADJUSTL(cp_to_string(i))))
-            CALL dbcsr_set(commute_mat(i)%matrix,0.0_dp)
+         DO i = 2, 3
+            ALLOCATE (commute_mat(i)%matrix)
+            CALL dbcsr_copy(commute_mat(i)%matrix, commute_mat(1)%matrix, &
+                            "KP_p"//TRIM(ADJUSTL(cp_to_string(i))))
+            CALL dbcsr_set(commute_mat(i)%matrix, 0.0_dp)
          END DO
 
          CALL build_com_mom_nl(qs_kind_set, sab_orb, sap_ppnl, dft_control%qs_control%eps_ppnl, &
-                                 particle_set, cell=cell, matrix_rv=commute_mat)
+                               particle_set, cell=cell, matrix_rv=commute_mat)
 
-         DO ispin = 1,nspins
-            CALL get_mo_set(mo_set=mos(ispin),mo_coeff=mo_coeff)
-            CALL cp_fm_get_info(mo_coeff,ncol_global=nmo)
-            DO i=1,3
-               CALL dbcsr_add(grad_r(i)%matrix,commute_mat(i)%matrix,alpha_scalar=1.0_dp, &
-                                 beta_scalar=1.0_dp)
+         DO ispin = 1, nspins
+            CALL get_mo_set(mo_set=mos(ispin), mo_coeff=mo_coeff)
+            CALL cp_fm_get_info(mo_coeff, ncol_global=nmo)
+            DO i = 1, 3
+               CALL dbcsr_add(grad_r(i)%matrix, commute_mat(i)%matrix, alpha_scalar=1.0_dp, &
+                              beta_scalar=1.0_dp)
                CALL dbcsr_copy(dBerry_psi0_ao(i, ispin)%matrix, grad_r(i)%matrix)
             END DO
          END DO
       END IF ! do_raman_vel
-      
+
       CALL dbcsr_deallocate_matrix_set(grad_r)
       CALL dbcsr_deallocate_matrix_set(commute_mat)
 
@@ -2211,31 +2206,29 @@ CONTAINS
 !> \author Ravi Kumar
 ! **************************************************************************************************
    SUBROUTINE polar_operators_velocity_mo(qs_env)
- 
+
       TYPE(qs_environment_type), POINTER                 :: qs_env
-      INTEGER                                            :: i,idir,  ispin, nmo, nspins, natom
+
+      INTEGER                                            :: i, idir, ispin, natom, nmo, nspins
       INTEGER, ALLOCATABLE, DIMENSION(:)                 :: first_sgf, last_sgf
       INTEGER, DIMENSION(:), POINTER                     :: row_blk_sizes
       LOGICAL                                            :: do_raman_vel
-      TYPE(atomic_kind_type), DIMENSION(:), &
-      POINTER                                            :: atomic_kind_set
       TYPE(cell_type), POINTER                           :: cell
       TYPE(cp_fm_type), DIMENSION(:, :), POINTER         :: dBerry_psi0
       TYPE(cp_fm_type), POINTER                          :: mo_coeff
       TYPE(dbcsr_distribution_type), POINTER             :: dbcsr_dist
-      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: matrix_s, grad_r, commute_mat
+      TYPE(dbcsr_p_type), DIMENSION(:), POINTER          :: commute_mat, grad_r, matrix_s
       TYPE(dbcsr_p_type), DIMENSION(:, :), POINTER       :: dBerry_psi0_ao
       TYPE(dft_control_type), POINTER                    :: dft_control
       TYPE(mo_set_type), DIMENSION(:), POINTER           :: mos
       TYPE(neighbor_list_set_p_type), DIMENSION(:), &
-      POINTER                                            :: sab_orb, sap_ppnl
+         POINTER                                         :: sab_orb, sap_ppnl
       TYPE(particle_type), DIMENSION(:), POINTER         :: particle_set
       TYPE(polar_env_type), POINTER                      :: polar_env
       TYPE(qs_kind_type), DIMENSION(:), POINTER          :: qs_kind_set
 
-
-      NULLIFY (grad_r, commute_mat, cell, qs_kind_set, particle_set, sap_ppnl, sab_orb,&
-               atomic_kind_set)
+      NULLIFY (grad_r, commute_mat, cell, qs_kind_set, particle_set, &
+               sap_ppnl, sab_orb)
 
       CALL get_qs_env(qs_env=qs_env, &
                       dft_control=dft_control, &
@@ -2245,7 +2238,7 @@ CONTAINS
                       qs_kind_set=qs_kind_set, &
                       particle_set=particle_set, &
                       sab_orb=sab_orb, &
-                      dbcsr_dist=dbcsr_dist,&
+                      dbcsr_dist=dbcsr_dist, &
                       sap_ppnl=sap_ppnl, &
                       matrix_s=matrix_s)
 
@@ -2256,82 +2249,82 @@ CONTAINS
                          dBerry_psi0=dBerry_psi0, &
                          dBerry_psi0_ao=dBerry_psi0_ao)
 
-!     Grad_r part of the dipole operator in velocity gauge 
+!     Grad_r part of the dipole operator in velocity gauge
 
       IF (do_raman_vel) THEN
-      ! build the linear momentum matrices
-      ! prepare for allocation
-         natom = SIZE(particle_set,1)
+         ! build the linear momentum matrices
+         ! prepare for allocation
+         natom = SIZE(particle_set, 1)
          ALLOCATE (first_sgf(natom))
          ALLOCATE (last_sgf(natom))
-         CALL get_particle_set(particle_set=particle_set,qs_kind_set=qs_kind_set,&
-                                 first_sgf=first_sgf,&
-                                 last_sgf=last_sgf)
-   ! prepare for allocation
+         CALL get_particle_set(particle_set=particle_set, qs_kind_set=qs_kind_set, &
+                               first_sgf=first_sgf, &
+                               last_sgf=last_sgf)
+         ! prepare for allocation
          ALLOCATE (row_blk_sizes(natom))
          CALL dbcsr_convert_offsets_to_sizes(first_sgf, row_blk_sizes, last_sgf)
-   ! 
-         DEALLOCATE (first_sgf,last_sgf)
+         !
+         DEALLOCATE (first_sgf, last_sgf)
 
-         CALL dbcsr_allocate_matrix_set(grad_r,3)
-         ALLOCATE(grad_r(1)%matrix)
+         CALL dbcsr_allocate_matrix_set(grad_r, 3)
+         ALLOCATE (grad_r(1)%matrix)
 
          CALL dbcsr_create(matrix=grad_r(1)%matrix, &
                            name="OP_P", &
-                           dist=dbcsr_dist, matrix_type=dbcsr_type_antisymmetric ,&
+                           dist=dbcsr_dist, matrix_type=dbcsr_type_antisymmetric, &
                            row_blk_size=row_blk_sizes, col_blk_size=row_blk_sizes, &
                            nze=0, mutable_work=.TRUE.)
 
-         CALL cp_dbcsr_alloc_block_from_nbl(grad_r(1)%matrix,sab_orb)
+         CALL cp_dbcsr_alloc_block_from_nbl(grad_r(1)%matrix, sab_orb)
          !
          ! DEALLOCATE(row_blk_sizes)
-         CALL dbcsr_set(grad_r(1)%matrix,0.0_dp)
-         DO idir = 2,3
-            ALLOCATE(grad_r(idir)%matrix)
-            CALL dbcsr_copy(grad_r(idir)%matrix,grad_r(1)%matrix,&
-                              "polar_env%op_p_ao"//"-"//TRIM(ADJUSTL(cp_to_string(idir))))
-            CALL dbcsr_set(grad_r(idir)%matrix,0.0_dp)
-         ENDDO
-         CALL build_lin_mom_matrix(qs_env,grad_r)
+         CALL dbcsr_set(grad_r(1)%matrix, 0.0_dp)
+         DO idir = 2, 3
+            ALLOCATE (grad_r(idir)%matrix)
+            CALL dbcsr_copy(grad_r(idir)%matrix, grad_r(1)%matrix, &
+                            "polar_env%op_p_ao"//"-"//TRIM(ADJUSTL(cp_to_string(idir))))
+            CALL dbcsr_set(grad_r(idir)%matrix, 0.0_dp)
+         END DO
+         CALL build_lin_mom_matrix(qs_env, grad_r)
 
 !now commutator [r,V_nl] needed for nonlocal pseudopotentials
 
-         CALL dbcsr_allocate_matrix_set(commute_mat,3)
-         ALLOCATE(commute_mat(1)%matrix)
+         CALL dbcsr_allocate_matrix_set(commute_mat, 3)
+         ALLOCATE (commute_mat(1)%matrix)
 
          CALL dbcsr_create(matrix=commute_mat(1)%matrix, &
                            name="OP_P", &
-                           dist=dbcsr_dist, matrix_type=dbcsr_type_antisymmetric ,&
+                           dist=dbcsr_dist, matrix_type=dbcsr_type_antisymmetric, &
                            row_blk_size=row_blk_sizes, col_blk_size=row_blk_sizes, &
                            nze=0, mutable_work=.TRUE.)
 
-         CALL cp_dbcsr_alloc_block_from_nbl(commute_mat(1)%matrix,sab_orb)
+         CALL cp_dbcsr_alloc_block_from_nbl(commute_mat(1)%matrix, sab_orb)
          !
-         DEALLOCATE(row_blk_sizes)
-         CALL dbcsr_set(commute_mat(1)%matrix,0.0_dp)
+         DEALLOCATE (row_blk_sizes)
+         CALL dbcsr_set(commute_mat(1)%matrix, 0.0_dp)
 
-         DO i = 2,3
-            ALLOCATE(commute_mat(i)%matrix)
-            CALL dbcsr_copy(commute_mat(i)%matrix,commute_mat(1)%matrix,&
-                              "KP_p"//TRIM(ADJUSTL(cp_to_string(i))))
-            CALL dbcsr_set(commute_mat(i)%matrix,0.0_dp)
+         DO i = 2, 3
+            ALLOCATE (commute_mat(i)%matrix)
+            CALL dbcsr_copy(commute_mat(i)%matrix, commute_mat(1)%matrix, &
+                            "KP_p"//TRIM(ADJUSTL(cp_to_string(i))))
+            CALL dbcsr_set(commute_mat(i)%matrix, 0.0_dp)
          END DO
 
          CALL build_com_mom_nl(qs_kind_set, sab_orb, sap_ppnl, dft_control%qs_control%eps_ppnl, &
-                                 particle_set, cell=cell, matrix_rv=commute_mat)
+                               particle_set, cell=cell, matrix_rv=commute_mat)
 
-         DO ispin = 1,nspins
-            CALL get_mo_set(mo_set=mos(ispin),mo_coeff=mo_coeff)
-            CALL cp_fm_get_info(mo_coeff,ncol_global=nmo)
-            DO i=1,3
-               CALL dbcsr_add(grad_r(i)%matrix,commute_mat(i)%matrix,alpha_scalar=1.0_dp, &
+         DO ispin = 1, nspins
+            CALL get_mo_set(mo_set=mos(ispin), mo_coeff=mo_coeff)
+            CALL cp_fm_get_info(mo_coeff, ncol_global=nmo)
+            DO i = 1, 3
+               CALL dbcsr_add(grad_r(i)%matrix, commute_mat(i)%matrix, alpha_scalar=1.0_dp, &
                               beta_scalar=1.0_dp)
-               CALL cp_dbcsr_sm_fm_multiply(grad_r(i)%matrix,mo_coeff,dBerry_psi0(i,ispin),ncol=nmo,&
-                          alpha=-1.0_dp)
+               CALL cp_dbcsr_sm_fm_multiply(grad_r(i)%matrix, mo_coeff, dBerry_psi0(i, ispin), ncol=nmo, &
+                                            alpha=-1.0_dp)
             END DO
          END DO
       END IF ! do_raman_vel
-      
+
       CALL dbcsr_deallocate_matrix_set(grad_r)
       CALL dbcsr_deallocate_matrix_set(commute_mat)
 
@@ -2535,11 +2528,10 @@ CONTAINS
 !> \author vw
 ! **************************************************************************************************
    SUBROUTINE fm_scale_by_pbc_AC(matrix, ra, rc, cell, ixyz)
-      TYPE(cp_fm_type), INTENT(IN)             :: matrix
-      REAL(KIND=dp), DIMENSION(:, :), &
-         INTENT(in)                            :: ra, rc
-      TYPE(cell_type), POINTER                 :: cell
-      INTEGER, INTENT(IN)                      :: ixyz
+      TYPE(cp_fm_type), INTENT(IN)                       :: matrix
+      REAL(KIND=dp), DIMENSION(:, :), INTENT(in)         :: ra, rc
+      TYPE(cell_type), POINTER                           :: cell
+      INTEGER, INTENT(IN)                                :: ixyz
 
       CHARACTER(LEN=*), PARAMETER :: routineN = 'fm_scale_by_pbc_AC'
 

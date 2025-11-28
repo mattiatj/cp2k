@@ -81,9 +81,9 @@ MODULE qs_linres_module
    USE qs_linres_op,                    ONLY: current_operators,&
                                               issc_operators,&
                                               polar_operators,&
+                                              polar_operators_ao,&
                                               polar_operators_local,&
                                               polar_operators_local_wannier
-                                              polar_operators_ao
    USE qs_linres_polar_utils,           ONLY: polar_env_init,&
                                               polar_polar,&
                                               polar_polar_ao,&
@@ -771,7 +771,7 @@ CONTAINS
 
       TYPE(qs_environment_type), POINTER                 :: qs_env
       TYPE(qs_p_env_type)                                :: p_env
-      
+
       CALL polar_env_init(qs_env)
 
       IF (qs_env%polar_env%ao_solver) THEN

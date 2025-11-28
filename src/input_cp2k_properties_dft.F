@@ -1308,13 +1308,13 @@ CONTAINS
                           usage="DO_RAMAN_WANNIER F", &
                           default_l_val=.FALSE., lone_keyword_l_val=.TRUE.)
       CALL section_add_keyword(section, keyword)
-      CALL keyword_release(keyword)      
+      CALL keyword_release(keyword)
 
       CALL keyword_create( &
          keyword, __LOCATION__, name="PRECONDITIONER", &
          description="Type of preconditioner to be used with MO conjugate gradient solver. "// &
          "They differ in effectiveness, cost of construction, cost of application. "// &
-         "Properly preconditioned minimization can be orders of magnitude faster than doing nothing."// &
+         "Properly preconditioned minimization can be orders of magnitude faster than doing nothing. "// &
          "Only multi-level conjugate gradient preconditioner (MULTI_LEVEL) available for AO response solver (AO_ORTHO).", &
          usage="PRECONDITIONER FULL_ALL", &
          default_i_val=precond_mlp, &
@@ -1333,12 +1333,12 @@ CONTAINS
                        "Cholesky inversion of S, not as good as FULL_KINETIC, yet equally expensive.", &
                        "Based on same CG as AO-solver itself, but uses cheaper linear transformation", &
                        "skip preconditioning"), &
-         enum_i_vals=(/ot_precond_full_all, ot_precond_full_single_inverse, ot_precond_full_single, &
-                       ot_precond_full_kinetic, ot_precond_s_inverse, precond_mlp, ot_precond_none/))
+         enum_i_vals=[ot_precond_full_all, ot_precond_full_single_inverse, ot_precond_full_single, &
+                      ot_precond_full_kinetic, ot_precond_s_inverse, precond_mlp, ot_precond_none])
       CALL section_add_keyword(section, keyword)
       CALL keyword_release(keyword)
-      
-      !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%      
+
+      !%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
       CALL keyword_create(keyword, __LOCATION__, name="PERIODIC_DIPOLE_OPERATOR", &
                           description="Type of dipole operator: Berry phase(T) or Local(F)", &

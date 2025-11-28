@@ -929,7 +929,7 @@ CONTAINS
       CHARACTER(LEN=*)                                   :: tag
       INTEGER, INTENT(IN), OPTIONAL                      :: ind
 
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'linres_write_restart'
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'linres_write_restart_ao'
 
       CHARACTER(LEN=default_path_length)                 :: filename
       CHARACTER(LEN=default_string_length)               :: my_middle, my_pos, my_status
@@ -1024,7 +1024,7 @@ CONTAINS
 
       CALL timestop(handle)
 
-   END SUBROUTINE linres_write_restart_ao      
+   END SUBROUTINE linres_write_restart_ao
 ! **************************************************************************************************
 !> \brief ...
 !> \param qs_env ...
@@ -1194,7 +1194,6 @@ CONTAINS
 !> \param qs_env ...
 !> \param linres_section ...
 !> \param vec ...
-!> \param vec_ao ...
 !> \param ivec ...
 !> \param tag ...
 !> \param ind ...
@@ -1208,7 +1207,7 @@ CONTAINS
       CHARACTER(LEN=*)                                   :: tag
       INTEGER, INTENT(INOUT), OPTIONAL                   :: ind
 
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'linres_read_restart'
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'linres_read_restart_ao'
 
       CHARACTER(LEN=default_path_length)                 :: filename
       CHARACTER(LEN=default_string_length)               :: my_middle
@@ -1305,15 +1304,15 @@ CONTAINS
                CALL para_env%bcast(iostat)
             END IF
 
-            IF (iostat .NE. 0) EXIT
+            IF (iostat /= 0) EXIT
             CALL para_env%bcast(ivec_tmp)
             CALL para_env%bcast(nspins_tmp)
             CALL para_env%bcast(nao_tmp)
 
             ! check that the number nao, nmo and nspins are
             ! the same as in the current mos
-            IF (nspins_tmp .NE. nspins) CPABORT("nspins not consistent")
-            IF (nao_tmp .NE. nao) CPABORT("nao not consistent")
+            IF (nspins_tmp /= nspins) CPABORT("nspins not consistent")
+            IF (nao_tmp /= nao) CPABORT("nao not consistent")
             !
             DO ispin = 1, nspins
                CALL get_mo_set(mos(ispin), mo_coeff=mo_coeff)
@@ -1321,7 +1320,7 @@ CONTAINS
                !
                IF (rst_unit > 0) READ (rst_unit) nmo_tmp
                CALL para_env%bcast(nmo_tmp)
-               IF (nmo_tmp .NE. nmo) CPABORT("nmo not consistent")
+               IF (nmo_tmp /= nmo) CPABORT("nmo not consistent")
                !
                ! read the response
                DO i = 1, nmo, MAX(max_block, 1)
@@ -1329,13 +1328,13 @@ CONTAINS
                   DO j = 1, i_block
                      IF (rst_unit > 0) READ (rst_unit) vecbuffer(1:nao, j)
                   END DO
-                  IF (iv .EQ. ivec_tmp) THEN
+                  IF (iv == ivec_tmp) THEN
                      CALL para_env%bcast(vecbuffer)
                      CALL cp_fm_set_submatrix(vec(ispin), vecbuffer, 1, i, nao, i_block)
                   END IF
                END DO
             END DO
-            IF (ivec .EQ. ivec_tmp) EXIT
+            IF (ivec == ivec_tmp) EXIT
          END DO
 
          IF (iostat /= 0) THEN
@@ -1353,7 +1352,7 @@ CONTAINS
 
       CALL timestop(handle)
 
-   END SUBROUTINE linres_read_restart_ao   
+   END SUBROUTINE linres_read_restart_ao
 
 ! **************************************************************************************************
 !> \brief ...
