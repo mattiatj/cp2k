@@ -23,6 +23,7 @@ MODULE ec_orth_solver
    USE cp_dbcsr_contrib,                ONLY: dbcsr_add_on_diag,&
                                               dbcsr_checksum,&
                                               dbcsr_dot
+   USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
    USE cp_dbcsr_operations,             ONLY: dbcsr_allocate_matrix_set,&
                                               dbcsr_deallocate_matrix_set
    USE cp_external_control,             ONLY: external_control
@@ -1088,13 +1089,13 @@ CONTAINS
       IF (linres_control%preconditioner_type == precond_mlp) THEN
          ! M * z_0 = r_0
          ! Conjugate gradient returns z_0
-         CALL preconditioner(qs_env=qs_env, &
-                             matrix_ks=matrix_ks, &
-                             matrix_p=matrix_p, &
-                             matrix_rhs=matrix_res, &
-                             matrix_cg_z=matrix_z0, &
-                             eps_filter=eps_filter, &
-                             iounit=iounit)
+         CALL ec_preconditioner(qs_env=qs_env, &
+                                matrix_ks=matrix_ks, &
+                                matrix_p=matrix_p, &
+                                matrix_rhs=matrix_res, &
+                                matrix_cg_z=matrix_z0, &
+                                eps_filter=eps_filter, &
+                                iounit=iounit)
          linres_control%flag = "PCG-AO"
       ELSE
          ! z_0 = r_0
@@ -1287,13 +1288,13 @@ CONTAINS
          IF (linres_control%preconditioner_type == precond_mlp) THEN
             ! M * z_j+1 = r_j+1
             ! Conjugate gradient returns z_j+1
-            CALL preconditioner(qs_env=qs_env, &
-                                matrix_ks=matrix_ks, &
-                                matrix_p=matrix_p, &
-                                matrix_rhs=matrix_res, &
-                                matrix_cg_z=matrix_z0, &
-                                eps_filter=eps_filter, &
-                                iounit=iounit)
+            CALL ec_preconditioner(qs_env=qs_env, &
+                                   matrix_ks=matrix_ks, &
+                                   matrix_p=matrix_p, &
+                                   matrix_rhs=matrix_res, &
+                                   matrix_cg_z=matrix_z0, &
+                                   eps_filter=eps_filter, &
+                                   iounit=iounit)
             linres_control%flag = "PCG-AO"
          ELSE
             DO ispin = 1, nspins

@@ -20,9 +20,10 @@ MODULE qs_linres_polar_utils
    USE cell_types,                      ONLY: cell_type
    USE cp_control_types,                ONLY: dft_control_type
    USE cp_dbcsr_api,                    ONLY: &
-        dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_desymmetrize, dbcsr_dot, &
-        dbcsr_init_p, dbcsr_multiply, dbcsr_p_type, dbcsr_release, dbcsr_scale, dbcsr_set, &
-        dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, dbcsr_type_symmetric
+        dbcsr_copy, dbcsr_create, dbcsr_deallocate_matrix, dbcsr_desymmetrize, dbcsr_init_p, &
+        dbcsr_multiply, dbcsr_p_type, dbcsr_release, dbcsr_scale, dbcsr_set, dbcsr_type, &
+        dbcsr_type_antisymmetric, dbcsr_type_no_symmetry, dbcsr_type_symmetric
+   USE cp_dbcsr_contrib,                ONLY: dbcsr_dot
    USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
    USE cp_dbcsr_operations,             ONLY: cp_dbcsr_sm_fm_multiply,&
                                               dbcsr_allocate_matrix_set,&
@@ -231,13 +232,13 @@ CONTAINS
             CALL dbcsr_create(polar_env%psi1_dBerry_ao(idir, ispin)%matrix, &
                               template=matrix_ks(1)%matrix, matrix_type=dbcsr_type_no_symmetry)
             CALL dbcsr_copy(polar_env%psi1_dBerry_ao(idir, ispin)%matrix, matrix_s(1, 1)%matrix)
-            CALL dbcsr_set(polar_env%psi1_dBerry_ao(idir, ispin)%matrix, 0.0)
+            CALL dbcsr_set(polar_env%psi1_dBerry_ao(idir, ispin)%matrix, 0.0_dp)
 
             CALL dbcsr_init_p(polar_env%dBerry_psi0_ao(idir, ispin)%matrix)
             CALL dbcsr_create(polar_env%dBerry_psi0_ao(idir, ispin)%matrix, &
                               template=matrix_ks(1)%matrix, matrix_type=dbcsr_type_no_symmetry)
             CALL dbcsr_copy(polar_env%dBerry_psi0_ao(idir, ispin)%matrix, matrix_s(1, 1)%matrix)
-            CALL dbcsr_set(polar_env%dBerry_psi0_ao(idir, ispin)%matrix, 0.0)
+            CALL dbcsr_set(polar_env%dBerry_psi0_ao(idir, ispin)%matrix, 0.0_dp)
          END DO
       END DO
 

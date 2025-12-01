@@ -33,10 +33,11 @@ MODULE qs_linres_op
    USE cp_dbcsr_api,                    ONLY: &
         dbcsr_add, dbcsr_convert_offsets_to_sizes, dbcsr_copy, dbcsr_create, &
         dbcsr_deallocate_matrix, dbcsr_desymmetrize, dbcsr_distribution_type, dbcsr_get_block_p, &
-        dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, dbcsr_iterator_start, &
-        dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_p_type, dbcsr_print, dbcsr_set, &
-        dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry
-   USE cp_dbcsr_contrib,                ONLY: dbcsr_checksum
+        dbcsr_get_info, dbcsr_init_p, dbcsr_iterator_blocks_left, dbcsr_iterator_next_block, &
+        dbcsr_iterator_start, dbcsr_iterator_stop, dbcsr_iterator_type, dbcsr_multiply, &
+        dbcsr_p_type, dbcsr_set, dbcsr_type, dbcsr_type_antisymmetric, dbcsr_type_no_symmetry
+   USE cp_dbcsr_contrib,                ONLY: dbcsr_checksum,&
+                                              dbcsr_print
    USE cp_dbcsr_cp2k_link,              ONLY: cp_dbcsr_alloc_block_from_nbl
    USE cp_dbcsr_operations,             ONLY: copy_dbcsr_to_fm,&
                                               copy_fm_to_dbcsr,&
@@ -683,7 +684,7 @@ CONTAINS
          IF (do_periodic) THEN
             CALL polar_operators_berry(qs_env)
          ELSE IF (do_raman_wannier) THEN
-            CALL polar_operators_local_wannier(qs_env)
+            CALL polar_operators_local_wannier_old(qs_env)
          ELSE IF (do_raman_vel) THEN
             CALL polar_operators_velocity_mo(qs_env)
          ELSE
@@ -1151,7 +1152,7 @@ CONTAINS
                                    1.0_dp, dBerry_psi0_ao(i, ispin)%matrix, filter_eps=eps_filter, retain_sparsity=.FALSE.)
 
                ! CALL dbcsr_desymmetrize(dBerry_psi0_ao(i, ispin)%matrix, matrix_nosym_temp(2, ispin)%matrix)
-               CALL dbcsr_print(matrix_nosym_temp(3, ispin)%matrix, matlab_format=.TRUE.)
+               CALL dbcsr_print(matrix_nosym_temp(3, ispin)%matrix)
             END DO
 
          END DO !x/y/z-direction
@@ -1193,10 +1194,10 @@ CONTAINS
 !>      06.2018 polar_env integrated into qs_env (MK)
 !> \author Ravi,
 ! **************************************************************************************************
-   SUBROUTINE polar_operators_local_wannier(qs_env)
+   SUBROUTINE polar_operators_local_wannier_old(qs_env)
       TYPE(qs_environment_type), POINTER                 :: qs_env
 
-      CHARACTER(LEN=*), PARAMETER :: routineN = 'polar_operators_local_wannier'
+      CHARACTER(LEN=*), PARAMETER :: routineN = 'polar_operators_local_wannier_old'
 
       INTEGER :: handle, i, icenter, idir, is, ispin, istate, j, max_nbr_center, max_states, nao, &
          natom, nmo, nmoloc, nspins, nstate, nstate_list(2)
@@ -1424,7 +1425,7 @@ CONTAINS
 
       CALL timestop(handle)
 
-   END SUBROUTINE polar_operators_local_wannier
+   END SUBROUTINE polar_operators_local_wannier_old
 
 ! **************************************************************************************************
 !> \brief Calculate the periodic electric dipole moment operator having center at the
@@ -2141,7 +2142,7 @@ CONTAINS
                            name="OP_P", &
                            dist=dbcsr_dist, matrix_type=dbcsr_type_antisymmetric, &
                            row_blk_size=row_blk_sizes, col_blk_size=row_blk_sizes, &
-                           nze=0, mutable_work=.TRUE.)
+                           mutable_work=.TRUE.)
 
          CALL cp_dbcsr_alloc_block_from_nbl(grad_r(1)%matrix, sab_orb)
          !
@@ -2164,7 +2165,7 @@ CONTAINS
                            name="OP_P", &
                            dist=dbcsr_dist, matrix_type=dbcsr_type_antisymmetric, &
                            row_blk_size=row_blk_sizes, col_blk_size=row_blk_sizes, &
-                           nze=0, mutable_work=.TRUE.)
+                           mutable_work=.TRUE.)
 
          CALL cp_dbcsr_alloc_block_from_nbl(commute_mat(1)%matrix, sab_orb)
          !
@@ -2273,7 +2274,7 @@ CONTAINS
                            name="OP_P", &
                            dist=dbcsr_dist, matrix_type=dbcsr_type_antisymmetric, &
                            row_blk_size=row_blk_sizes, col_blk_size=row_blk_sizes, &
-                           nze=0, mutable_work=.TRUE.)
+                           mutable_work=.TRUE.)
 
          CALL cp_dbcsr_alloc_block_from_nbl(grad_r(1)%matrix, sab_orb)
          !
@@ -2296,7 +2297,7 @@ CONTAINS
                            name="OP_P", &
                            dist=dbcsr_dist, matrix_type=dbcsr_type_antisymmetric, &
                            row_blk_size=row_blk_sizes, col_blk_size=row_blk_sizes, &
-                           nze=0, mutable_work=.TRUE.)
+                           mutable_work=.TRUE.)
 
          CALL cp_dbcsr_alloc_block_from_nbl(commute_mat(1)%matrix, sab_orb)
          !
@@ -2553,7 +2554,6 @@ CONTAINS
       m = SIZE(ra, 2)
 
       a => matrix%local_data
-#if defined(__SCALAPACK)
       DO icol_local = 1, ncol_local
          icol_global = matrix%matrix_struct%col_indices(icol_local)
          IF (icol_global > n) CYCLE
@@ -2566,16 +2566,6 @@ CONTAINS
             a(irow_local, icol_local) = a(irow_local, icol_local)*dist(ixyz)
          END DO
       END DO
-#else
-      DO icol_local = 1, MIN(n, ncol_global)
-         rrc = rc(:, icol_local)
-         DO irow_local = 1, MIN(m, nrow_global)
-            rra = ra(:, irow_local)
-            dist = pbc(rrc, rra, cell)
-            a(irow_local, icol_local) = a(irow_local, icol_local)*dist(ixyz)
-         END DO
-      END DO
-#endif
 
       CALL timestop(handle)
 
