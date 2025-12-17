@@ -1013,13 +1013,13 @@ CONTAINS
             DO idir = 1, 3
                CALL linres_read_restart(qs_env, lr_section, psi1_dBerry(idir, :), idir, "psi1_dBerry")
             END DO
-         ELSE 
+         ELSE
             DO idir = 1, 3
                DO ispin = 1, nspins
                   CALL cp_fm_set_all(psi1_dBerry(idir, ispin), 0.0_dp)
                END DO
             END DO
-         ENDIF
+         END IF
 
 !!!!!!
 !!$OMP PARALLEL DEFAULT(NONE) &
