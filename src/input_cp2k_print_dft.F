@@ -24,7 +24,7 @@ MODULE input_cp2k_print_dft
       Lippert1999, Lu2004, Merlot2014, Perdew1981, Repasky2002, Rocha2006, Schenter2008, Schiffmann2015, &
       Shigeta2001, Stewart1982, Stewart1989, Stewart2007, Thiel1992, VanVoorhis2015, &
       VandeVondele2003, VandeVondele2005a, VandeVondele2005b, VandeVondele2006, Weber2008, &
-      Yin2017, Pracht2019, Caldeweyher2019, Caldeweyher2020
+      Yin2017, Pracht2019, Caldeweyher2019, Caldeweyher2020, Mattiat2022
    USE cp_output_handling, ONLY: add_last_numeric, &
                                  cp_print_key_section_create, &
                                  debug_print_level, &
@@ -1249,7 +1249,8 @@ CONTAINS
                           repeats=.FALSE., &
                           n_var=1, &
                           default_l_val=.FALSE., &
-                          lone_keyword_l_val=.TRUE.)
+                          lone_keyword_l_val=.TRUE., &
+                          citations=[Mattiat2022])
       CALL section_add_keyword(print_key, keyword)
       CALL keyword_release(keyword)
       CALL keyword_create(keyword, __LOCATION__, &
@@ -1260,7 +1261,8 @@ CONTAINS
                           repeats=.FALSE., &
                           n_var=1, &
                           default_l_val=.FALSE., &
-                          lone_keyword_l_val=.TRUE.)
+                          lone_keyword_l_val=.TRUE., &
+                          citations=[Mattiat2022])
       CALL section_add_keyword(print_key, keyword)
       CALL keyword_release(keyword)
       CALL keyword_create(keyword, __LOCATION__, &
